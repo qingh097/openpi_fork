@@ -429,7 +429,7 @@ class TrainConfig:
     assets_base_dir: str = "./assets"
     # Base directory for checkpoints.
     # checkpoint_base_dir: str = "./checkpoints"
-    checkpoint_base_dir: str = "/mnt/disks/ssd3/openpi_checkpoints"
+    checkpoint_base_dir: str = "./openpi_checkpoints"
 
     # Random seed that will be used by random generators during training.
     seed: int = 42
@@ -640,17 +640,17 @@ _CONFIGS = [
         data=LeRobotYumiDataConfig(
             # repo_id="mlfu7/dpgs_conversion_video", # coffee maker 1k
             # repo_id="mlfu7/dpgs_sim_coffee_maker_5k", # coffee maker 5k
-            repo_id="mlfu7/dpgs_sim_coffee_maker_5k_updated", # coffee maker 5k updated
+            repo_id="dpgs_conversion_video", # coffee maker 5k updated
             base_config=DataConfig(
                 local_files_only=True,  # Set to True for local-only datasets.
                 prompt_from_task=True,
-                # episodes_index=list(range(50))
+                episodes_index=list(range(20))
                 # episodes_index=list(range(100))
                 # episodes_index=list(range(150)) # subsampling 200
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
-        num_train_steps=30_000,
+        num_train_steps=16_000,
         freeze_filter=pi0_fast.Pi0FASTConfig(
             # action_dim=16, action_horizon=10, paligemma_variant="gemma_2b"
             action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"
