@@ -1,17 +1,18 @@
-import os 
 import numpy as np
-from openpi.training import config
-from openpi.policies import policy_config
+from openpi_client import websocket_client_policy as _websocket_client_policy
+
+import numpy as np
 from openpi_client.image_tools import resize_with_pad
 from collections import deque
+import logging
 
 RESIZE_SIZE = 224
 
 class OpenPIWrapper():
     def __init__(
         self, 
-        model_ckpt_folder : str, 
-        ckpt_id : int, 
+        host, 
+        port, 
         text_prompt : str = "put the white cup on the coffee machine",
         control_mode : str = "temporal_ensemble",
     ) -> None:
@@ -26,9 +27,12 @@ class OpenPIWrapper():
         ckpt_id = 29999
         device = "cuda"
         """
-        checkpoint_dir = os.path.join(model_ckpt_folder, f"{ckpt_id}")
         # Create a trained policy.
-        self.policy = policy_config.create_trained_policy(config.get_config("pi0_fast_sim_b1k_450"), checkpoint_dir)
+        self.policy = _websocket_client_policy.WebsocketClientPolicy(
+            host=host,
+            port=port,
+        )
+        logging.info(f"Server metadata: {self.policy.get_server_metadata()}")
         self.text_prompt = text_prompt
         self.control_mode = control_mode
         self.action_queue = deque([],maxlen=10)
@@ -137,3 +141,31 @@ class OpenPIWrapper():
             "right_gripper": arms_action[..., 13:14],
         }
 
+
+
+
+openpi_policy = OpenPIWrapper(
+    host='0.0.0.0',
+    port=8000,
+    text_prompt="pick up the green mug",
+)
+
+import h5py
+path = "/svl/u/mengdixu/b1k-datagen/mimicgen/datasets/demo_450.hdf5"
+data = h5py.File(path, "r")
+demo_0 = data["data/demo_0"]
+obs_ego = demo_0["obs/robot_r1::robot_r1:eyes:Camera:0::rgb"][0,:,:,:3]
+obs_wrist_left = demo_0["obs/robot_r1::robot_r1:left_eef_link:Camera:0::rgb"][0,:,:,:3]
+obs_wrist_right = demo_0["obs/robot_r1::robot_r1:right_eef_link:Camera:0::rgb"][0,:,:,:3]
+obs = np.stack([obs_ego, obs_wrist_left, obs_wrist_right], axis=0)  #(num_cameras, H, W, C) 
+obs = obs[None, None]  #(B, T, num_cameras, H, W, C) 
+proprio = demo_0["obs/prop_state"][0,:][None,None] # (B, T, 21)
+example = {
+    "observation": obs,
+    "proprio": proprio,
+}
+action = openpi_policy.act(example)
+first_action = {key: value[0] for key, value in action.items()}
+first_action = np.concatenate([v for v in first_action.values()])
+gt_action  = demo_0["actions"][0,:]
+print(gt_action)

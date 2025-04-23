@@ -15,6 +15,7 @@ class EnvMode(enum.Enum):
     ALOHA_SIM = "aloha_sim"
     DROID = "droid"
     LIBERO = "libero"
+    B1K = 'b1k'
 
 
 @dataclasses.dataclass
@@ -32,6 +33,8 @@ def main(args: Args) -> None:
         EnvMode.ALOHA_SIM: _random_observation_aloha,
         EnvMode.DROID: _random_observation_droid,
         EnvMode.LIBERO: _random_observation_libero,
+        EnvMode.LIBERO: _random_observation_libero,
+        
     }[args.env]
 
     policy = _websocket_client_policy.WebsocketClientPolicy(
