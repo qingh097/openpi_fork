@@ -36,6 +36,7 @@ class OpenPIWrapper():
         self.text_prompt = text_prompt
         self.control_mode = control_mode
         self.action_queue = deque([],maxlen=10)
+        self.last_action = np.zeros((10, 21), dtype=np.float64)
     
     def reset(self):
         self.action_queue = deque([],maxlen=10)
@@ -98,7 +99,11 @@ class OpenPIWrapper():
             "observation/joint_position": joint_positions,
             "prompt": self.text_prompt,
         }
-        action = self.policy.infer(batch)
+        try:
+            action = self.policy.infer(batch)
+            self.last_action = action
+        except:
+            action = self.last_action
         # convert to absolute action and append gripper command
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
         # Need to broadcast joint_positions to match action sequence length

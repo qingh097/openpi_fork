@@ -1,17 +1,16 @@
-import os 
 import numpy as np
-from openpi.training import config
-from openpi.policies import policy_config
 from openpi_client.image_tools import resize_with_pad
 from collections import deque
+from openpi_client import websocket_client_policy as _websocket_client_policy
+import logging
 
 RESIZE_SIZE = 224
 
 class OpenPIWrapper():
     def __init__(
         self, 
-        model_ckpt_folder : str, 
-        ckpt_id : int, 
+        host, 
+        port, 
         text_prompt : str = "put the white cup on the coffee machine",
         control_mode : str = "temporal_ensemble",
     ) -> None:
@@ -26,12 +25,16 @@ class OpenPIWrapper():
         ckpt_id = 29999
         device = "cuda"
         """
-        checkpoint_dir = os.path.join(model_ckpt_folder, f"{ckpt_id}")
         # Create a trained policy.
-        self.policy = policy_config.create_trained_policy(config.get_config("pi0_fast_sim_b1k_450"), checkpoint_dir)
+        self.policy = _websocket_client_policy.WebsocketClientPolicy(
+            host=host,
+            port=port,
+        )
+        logging.info(f"Server metadata: {self.policy.get_server_metadata()}")
         self.text_prompt = text_prompt
         self.control_mode = control_mode
         self.action_queue = deque([],maxlen=10)
+        self.last_action = np.zeros((10, 21), dtype=np.float64)
     
     def reset(self):
         self.action_queue = deque([],maxlen=10)
@@ -94,7 +97,11 @@ class OpenPIWrapper():
             "observation/joint_position": joint_positions,
             "prompt": self.text_prompt,
         }
-        action = self.policy.infer(batch)
+        try:
+            action = self.policy.infer(batch)
+            self.last_action = action
+        except:
+            action = self.last_action
         # convert to absolute action and append gripper command
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
         # Need to broadcast joint_positions to match action sequence length
