@@ -4,8 +4,8 @@ from openpi.shared import download
 import numpy as np
 from openpi.policies import yumi_policy
 
-config = config.get_config("pi0_fast_yumi")
-checkpoint_dir = download.maybe_download("/home/mfu/research/openpi/checkpoints/pi0_fast_yumi/pi0_fast_yumi_finetune/29999")
+config = config.get_config("pi0_fast_sim_yumi_bimanual_lift_1k")
+checkpoint_dir = download.maybe_download("/svl/u/ravenh/openpi/openpi_checkpoints/pi0_fast_sim_yumi_bimanual_lift_1k/pi0_fast_sim_yumi_bimanual_lift_1k/29999")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir)

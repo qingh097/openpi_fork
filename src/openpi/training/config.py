@@ -20,6 +20,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.yumi_policy as yumi_policy
+import openpi.policies.b1k_policy as b1k_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
@@ -397,6 +398,44 @@ class LeRobotYumiDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
         )
+        
+@dataclasses.dataclass(frozen=True)
+class LeRobotB1kDataConfig(DataConfigFactory):
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Make inputs look like they come from the Libero environment
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/egocentric_camera": "egocentric_camera",
+                        "observation/wrist_image_left": "wrist_image_left",
+                        "observation/wrist_image_right": "wrist_image_right",
+                        "observation/joint_position": "joint_position",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # Prepare data for policy training
+        # Convert images to uint8 numpy arrays, add masks
+        data_transforms = _transforms.Group(
+            inputs=[b1k_policy.B1kInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
+            outputs=[b1k_policy.B1kOutputs()],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            use_quantile_norm = True,
+        )
 
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
@@ -437,7 +476,8 @@ class TrainConfig:
     batch_size: int = 32
     # Number of workers to use for the data loader. Increasing this number will speed up data loading but
     # will increase memory and CPU usage.
-    num_workers: int = 2
+    # num_workers: int = 2
+    num_workers: int = 0
     # Number of train steps (batches) to run.
     num_train_steps: int = 30_000
 
@@ -583,6 +623,29 @@ _CONFIGS = [
         ).get_freeze_filter(),
         ema_decay=None,
     ),
+    
+    # b1k configs
+    # b1k 248
+    TrainConfig(
+        name="pi0_fast_sim_b1k_450",
+        model=pi0_fast.Pi0FASTConfig(action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="blk_demo_450", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(450))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+            action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
 
     # drawer configs
     # drawer 50
@@ -590,9 +653,9 @@ _CONFIGS = [
         name="pi0_fast_sim_yumi_drawer_50",
         model=pi0_fast.Pi0FASTConfig(action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"),
         data=LeRobotYumiDataConfig(
-            repo_id="mlfu7/dpgs_sim_drawer_open_1k", # coffee maker 5k updated
+            repo_id="dpgs_sim_drawer_open_1k", # coffee maker 5k updated
             base_config=DataConfig(
-                local_files_only=False, 
+                local_files_only=True, 
                 prompt_from_task=True,
                 episodes_index=list(range(50))
             ),
@@ -609,9 +672,9 @@ _CONFIGS = [
         name="pi0_fast_sim_yumi_drawer_100",
         model=pi0_fast.Pi0FASTConfig(action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"),
         data=LeRobotYumiDataConfig(
-            repo_id="mlfu7/dpgs_sim_drawer_open_1k", # coffee maker 5k updated
+            repo_id="dpgs_sim_drawer_open_1k", # coffee maker 5k updated
             base_config=DataConfig(
-                local_files_only=False, 
+                local_files_only=True, 
                 prompt_from_task=True,
                 episodes_index=list(range(100))
             ),
@@ -628,11 +691,30 @@ _CONFIGS = [
         name="pi0_fast_sim_yumi_drawer_150",
         model=pi0_fast.Pi0FASTConfig(action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"),
         data=LeRobotYumiDataConfig(
-            repo_id="mlfu7/dpgs_sim_drawer_open_1k", # coffee maker 5k updated
+            repo_id="dpgs_sim_drawer_open_1k", # coffee maker 5k updated
             base_config=DataConfig(
-                local_files_only=False, 
+                local_files_only=True, 
                 prompt_from_task=True,
                 episodes_index=list(range(150))
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+            action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    # drawer 500
+    TrainConfig(
+        name="pi0_fast_sim_yumi_drawer_500",
+        model=pi0_fast.Pi0FASTConfig(action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotYumiDataConfig(
+            repo_id="dpgs_sim_drawer_open_1k", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(500))
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
@@ -647,10 +729,33 @@ _CONFIGS = [
         name="pi0_fast_sim_yumi_drawer_1k",
         model=pi0_fast.Pi0FASTConfig(action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"),
         data=LeRobotYumiDataConfig(
-            repo_id="mlfu7/dpgs_sim_drawer_open_1k", # coffee maker 5k updated
+            repo_id="dpgs_sim_drawer_open_1k", # coffee maker 5k updated
             base_config=DataConfig(
-                local_files_only=False, 
+                local_files_only=True, 
                 prompt_from_task=True,
+                episodes_index=list(range(1000))
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+            action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    
+    # bimanual lifting configs
+    # bimanual lifting 50
+    TrainConfig(
+        name="pi0_fast_sim_yumi_bimanual_lift_1k",
+        model=pi0_fast.Pi0FASTConfig(action_dim=16, action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotYumiDataConfig(
+            repo_id="dpgs_sim_bin_pickup_1k", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                # episodes_index=list(range(50))
                 episodes_index=list(range(1000))
             ),
         ),

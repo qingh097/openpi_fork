@@ -65,6 +65,19 @@ class FASTTokenizer:
         if actions is not None:
             # Tokenize actions with FAST tokenizer --> map to last tokens in PaliGemma vocab
             action_tokens = self._fast_tokenizer(actions[None])[0]
+            # try:
+            #     action_tokens = self._fast_tokenizer(actions[None])[0]
+            #     print(f"success tokenizing actions: {actions[0]}")
+            # except:
+            #     print(f"Error tokenizing actions: {actions.shape}")
+            #     raw_action = actions.clone()
+            #     for bidx in range(raw_action.shape[0]):
+            #         actions[:] = raw_action[bidx]
+            #         try:
+            #             self._fast_tokenizer(actions[None])[0]
+            #         except:
+            #             print(f"Error tokenizing actions:{bidx}, {raw_action[bidx]}")
+                        
             action_tokens_in_pg = self._act_tokens_to_paligemma_tokens(action_tokens)
 
             # Convention: postfix contains 'Action:' followed by FAST tokens, followed by '|'
