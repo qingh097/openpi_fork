@@ -35,6 +35,7 @@ class OpenPIWrapper():
         self.control_mode = control_mode
         self.action_queue = deque([],maxlen=10)
         self.last_action = np.zeros((10, 21), dtype=np.float64)
+        self.max_len = 8
     
     def reset(self):
         self.action_queue = deque([],maxlen=10)
@@ -69,6 +70,22 @@ class OpenPIWrapper():
             Dtype: float64
             Shape: (10, 16)
         """
+        
+        if self.control_mode == 'receeding_horizon':
+            if len(self.action_queue) > 0:
+                # pop the first action in the queue
+                final_action = self.action_queue.popleft()[None]
+                arms_action  = final_action[..., 7:]
+                
+                return {
+                    "mobile_base": final_action[..., :3],
+                    "torso": final_action[..., 3:7],
+                    "left_arm": arms_action[..., :6],
+                    "left_gripper": arms_action[..., 6:7],
+                    "right_arm": arms_action[..., 7:13],
+                    "right_gripper": arms_action[..., 13:14],
+                }
+            
         # update nbatch observation (B, T, num_cameras, H, W, C) -> (B, num_cameras, H, W, C)
         nbatch["observation"] = nbatch["observation"][:, -1] # only use the last observation step
         if nbatch["observation"].shape[-1] != 3:
@@ -106,17 +123,18 @@ class OpenPIWrapper():
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
         # Need to broadcast joint_positions to match action sequence length
         target_joint_positions = action["actions"].copy()
-        # return target_joint_positions
         
         # target_joint_positions[0] += joint_positions
         # for i in range(1, target_joint_positions.shape[0]):
         #     target_joint_positions[i] += target_joint_positions[i-1]
         # target_joint_positions[:,-8] = action["actions"][:,-8] # left gripper
         # target_joint_positions[:,-1] = action["actions"][:,-1] # right gripper
-        
+        if self.control_mode == 'receeding_horizon':
+            self.action_queue = deque([a for a in target_joint_positions[:self.max_len]])
+            final_action = self.action_queue.popleft()[None]
 
         # # temporal emsemble start
-        if self.control_mode == 'temporal_ensemble':
+        elif self.control_mode == 'temporal_ensemble':
             new_actions = deque(target_joint_positions)
             self.action_queue.append(new_actions)
             actions_current_timestep = np.empty((len(self.action_queue), target_joint_positions.shape[1]))
@@ -144,4 +162,3 @@ class OpenPIWrapper():
             "right_arm": arms_action[..., 7:13],
             "right_gripper": arms_action[..., 13:14],
         }
-

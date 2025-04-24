@@ -31,13 +31,14 @@ from PIL import Image
 from openpi_client.image_tools import resize_with_pad
 
 RAW_DATASET_FOLDERS = [
-"/svl/u/mengdixu/b1k-datagen/mimicgen/datasets/demo_450.hdf5"
+# "/svl/u/mengdixu/b1k-datagen/mimicgen/datasets/demo_450.hdf5"
 # "/svl/u/mengdixu/b1k-datagen/mimicgen/datasets/demo_248.hdf5"
+"/svl/u/mengdixu/b1k-datagen/brs-algo/datasets/r1_pick_cup_pi.hdf5"
 ]
 LANGUAGE_INSTRUCTIONS = [
     "pick up the green mug"
 ]
-REPO_NAME = "blk_demo_450_n"  # Name of the output dataset, also used for the Hugging Face Hub
+REPO_NAME = "r1_pick_cup_pi"  # Name of the output dataset, also used for the Hugging Face Hub
 
 CAMERA_KEYS = [
     "obs/robot_r1::robot_r1:eyes:Camera:0::rgb", 
@@ -121,13 +122,17 @@ def main():
         print("Processing file: ", data_day_dir)
         raw_data = h5py.File(data_day_dir, "r")
         # get the number of demos
-        num_demos = len(raw_data["data"].keys())
+        # num_demos = len(raw_data["data"].keys())
+        num_demos = len(raw_data.keys())
+        
         for idx in range(num_demos):
         # for idx in range(5):
         
             demo_id = f'demo_{idx}'
             print(f"Demo {idx}/{num_demos}: {demo_id} is being processed")
-            demo_data = raw_data["data"][demo_id]
+            # demo_data = raw_data["data"][demo_id]
+            demo_data = raw_data[demo_id]
+            
             # get the proprio data
             proprio_data = demo_data[STATE_KEY][:]
             #get action
