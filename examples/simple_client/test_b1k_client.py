@@ -109,11 +109,11 @@ class OpenPIWrapper():
         # Need to broadcast joint_positions to match action sequence length
         target_joint_positions = action["actions"].copy()
         
-        target_joint_positions[0] += joint_positions
-        for i in range(1, target_joint_positions.shape[0]):
-            target_joint_positions[i] += target_joint_positions[i-1]
-        target_joint_positions[:,-8] = action["actions"][:,-8] # left gripper
-        target_joint_positions[:,-1] = action["actions"][:,-1] # right gripper
+        # target_joint_positions[0] += joint_positions
+        # for i in range(1, target_joint_positions.shape[0]):
+        #     target_joint_positions[i] += target_joint_positions[i-1]
+        # target_joint_positions[:,-8] = action["actions"][:,-8] # left gripper
+        # target_joint_positions[:,-1] = action["actions"][:,-1] # right gripper
         
 
         # # temporal emsemble start
@@ -150,27 +150,46 @@ class OpenPIWrapper():
 
 
 openpi_policy = OpenPIWrapper(
-    host='0.0.0.0',
+    host='10.79.12.231',
     port=8000,
     text_prompt="pick up the green mug",
+    control_mode="others",
 )
 
 import h5py
 path = "/svl/u/mengdixu/b1k-datagen/mimicgen/datasets/demo_450.hdf5"
 data = h5py.File(path, "r")
-demo_0 = data["data/demo_0"]
-obs_ego = demo_0["obs/robot_r1::robot_r1:eyes:Camera:0::rgb"][0,:,:,:3]
-obs_wrist_left = demo_0["obs/robot_r1::robot_r1:left_eef_link:Camera:0::rgb"][0,:,:,:3]
-obs_wrist_right = demo_0["obs/robot_r1::robot_r1:right_eef_link:Camera:0::rgb"][0,:,:,:3]
-obs = np.stack([obs_ego, obs_wrist_left, obs_wrist_right], axis=0)  #(num_cameras, H, W, C) 
-obs = obs[None, None]  #(B, T, num_cameras, H, W, C) 
-proprio = demo_0["obs/prop_state"][0,:][None,None] # (B, T, 21)
-example = {
-    "observation": obs,
-    "proprio": proprio,
-}
-action = openpi_policy.act(example)
-first_action = {key: value[0] for key, value in action.items()}
-first_action = np.concatenate([v for v in first_action.values()])
-gt_action  = demo_0["actions"][0,:]
-print(gt_action)
+demo_0 = data["data/demo_449"]
+pred_action = []
+gt_actions =  demo_0["actions"]
+traj_len = gt_actions.shape[0]
+for idx in range(50):
+    obs_ego = demo_0["obs/robot_r1::robot_r1:eyes:Camera:0::rgb"][idx,:,:,:3]
+    obs_wrist_left = demo_0["obs/robot_r1::robot_r1:left_eef_link:Camera:0::rgb"][idx,:,:,:3]
+    obs_wrist_right = demo_0["obs/robot_r1::robot_r1:right_eef_link:Camera:0::rgb"][idx,:,:,:3]
+    obs = np.stack([obs_ego, obs_wrist_left, obs_wrist_right], axis=0)  #(num_cameras, H, W, C) 
+    obs = obs[None, None]  #(B, T, num_cameras, H, W, C) 
+    proprio = demo_0["obs/prop_state"][idx,:][None,None] # (B, T, 21)
+    example = {
+        "observation": obs,
+        "proprio": proprio,
+    }
+    action = openpi_policy.act(example)
+    first_action = {key: value[0] for key, value in action.items()}
+    first_action = np.concatenate([v for v in first_action.values()])
+    pred_action.append(first_action)
+
+pred_action = np.stack(pred_action, axis=0)
+print(pred_action[0])
+
+#plot the first action and gt action
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(4, 5, figsize=(10, 10))
+for i in range(4):
+    for j in range(5):
+        axes[i, j].plot(pred_action[:50,i*5+j], label='pred action')
+        axes[i, j].plot(gt_actions[:50,i*5+j], label='gt action')
+        axes[i, j].legend()
+        #set ylim to [-1, 1]
+        # axes[i, j].set_ylim([-1, 1])
+plt.savefig("pred_action.png")

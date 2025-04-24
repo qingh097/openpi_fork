@@ -106,12 +106,13 @@ class OpenPIWrapper():
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
         # Need to broadcast joint_positions to match action sequence length
         target_joint_positions = action["actions"].copy()
+        # return target_joint_positions
         
-        target_joint_positions[0] += joint_positions
-        for i in range(1, target_joint_positions.shape[0]):
-            target_joint_positions[i] += target_joint_positions[i-1]
-        target_joint_positions[:,-8] = action["actions"][:,-8] # left gripper
-        target_joint_positions[:,-1] = action["actions"][:,-1] # right gripper
+        # target_joint_positions[0] += joint_positions
+        # for i in range(1, target_joint_positions.shape[0]):
+        #     target_joint_positions[i] += target_joint_positions[i-1]
+        # target_joint_positions[:,-8] = action["actions"][:,-8] # left gripper
+        # target_joint_positions[:,-1] = action["actions"][:,-1] # right gripper
         
 
         # # temporal emsemble start

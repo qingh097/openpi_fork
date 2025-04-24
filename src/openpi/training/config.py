@@ -630,11 +630,11 @@ _CONFIGS = [
         name="pi0_fast_sim_b1k_450",
         model=pi0_fast.Pi0FASTConfig(action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"),
         data=LeRobotB1kDataConfig(
-            repo_id="blk_demo_450", # coffee maker 5k updated
+            repo_id="blk_demo_450_n", # coffee maker 5k updated
             base_config=DataConfig(
                 local_files_only=True, 
                 prompt_from_task=True,
-                episodes_index=list(range(450))
+                episodes_index=list(range(448))
                 # episodes_index=list(range(4))
                 
             ),

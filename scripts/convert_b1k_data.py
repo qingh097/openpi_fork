@@ -37,7 +37,7 @@ RAW_DATASET_FOLDERS = [
 LANGUAGE_INSTRUCTIONS = [
     "pick up the green mug"
 ]
-REPO_NAME = "blk_demo_test"  # Name of the output dataset, also used for the Hugging Face Hub
+REPO_NAME = "blk_demo_450_n"  # Name of the output dataset, also used for the Hugging Face Hub
 
 CAMERA_KEYS = [
     "obs/robot_r1::robot_r1:eyes:Camera:0::rgb", 
@@ -122,8 +122,8 @@ def main():
         raw_data = h5py.File(data_day_dir, "r")
         # get the number of demos
         num_demos = len(raw_data["data"].keys())
-        # for idx in range(num_demos):
-        for idx in range(5):
+        for idx in range(num_demos):
+        # for idx in range(5):
         
             demo_id = f'demo_{idx}'
             print(f"Demo {idx}/{num_demos}: {demo_id} is being processed")
@@ -133,9 +133,9 @@ def main():
             #get action
             raw_action = demo_data["actions"][:] #first 3 base, 4 torso, 7 left arm, 7 right arm
             #update action to be delta action but gripper to be absolute
-            action_data = raw_action - proprio_data
-            action_data[:,-8] = raw_action[:,-8] # left gripper
-            action_data[:,-1] = raw_action[:,-1] # right gripper
+            # action_data = raw_action - proprio_data
+            # action_data[:,-8] = raw_action[:,-8] # left gripper
+            # action_data[:,-1] = raw_action[:,-1] # right gripper
             seq_length = proprio_data.shape[0]
             
             resized_images = {
@@ -151,7 +151,7 @@ def main():
                 # load proprio data
                 proprio_t = proprio_data[step]
                 # create delta action
-                action_t = action_data[step]
+                action_t = raw_action[step]
                 
                 # get the images for this step
                 images_t = {
@@ -160,7 +160,7 @@ def main():
                 dataset.add_frame(
                     {
                         "joint_position": proprio_t,
-                        "actions": action_t+1e-6,
+                        "actions": action_t,
                         **images_t
                     }
                 )
