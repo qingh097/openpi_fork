@@ -118,15 +118,15 @@ class OpenPIWrapper():
         }
         try:
             action = self.policy.infer(batch) 
-            action += np.random.normal(0, 0.001, size=action.shape)
             self.last_action = action
         except:
-            action = self.last_action + np.random.normal(0, 0.01, size=self.last_action.shape)
+            action = self.last_action
             print("Error in action prediction, using last action")
         # convert to absolute action and append gripper command
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
         # Need to broadcast joint_positions to match action sequence length
-        target_joint_positions = action["actions"].copy()
+        target_joint_positions = action["actions"].copy() 
+        target_joint_positions += np.random.normal(0, 0.001, size=target_joint_positions.shape)
         
         # target_joint_positions[0] += joint_positions
         # for i in range(1, target_joint_positions.shape[0]):
