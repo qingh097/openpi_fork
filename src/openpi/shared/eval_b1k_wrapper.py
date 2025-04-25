@@ -3,7 +3,7 @@ from openpi_client.image_tools import resize_with_pad
 from collections import deque
 from openpi_client import websocket_client_policy as _websocket_client_policy
 import logging
-
+import copy
 RESIZE_SIZE = 224
 
 class OpenPIWrapper():
@@ -39,8 +39,9 @@ class OpenPIWrapper():
     
     def reset(self):
         self.action_queue = deque([],maxlen=10)
+        self.last_action = np.zeros((10, 21), dtype=np.float64)
 
-    def act(self, nbatch):
+    def act(self, input_obs):
         # TODO reformat data into the correct format for the model
         # TODO: communicate with justin that we are using numpy to pass the data. Also we are passing in uint8 for images 
         """
@@ -85,7 +86,8 @@ class OpenPIWrapper():
                     "right_arm": arms_action[..., 7:13],
                     "right_gripper": arms_action[..., 13:14],
                 }
-            
+        
+        nbatch = copy.deepcopy(input_obs)
         # update nbatch observation (B, T, num_cameras, H, W, C) -> (B, num_cameras, H, W, C)
         nbatch["observation"] = nbatch["observation"][:, -1] # only use the last observation step
         if nbatch["observation"].shape[-1] != 3:
