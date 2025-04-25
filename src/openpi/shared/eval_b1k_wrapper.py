@@ -117,7 +117,8 @@ class OpenPIWrapper():
             "prompt": self.text_prompt,
         }
         try:
-            action = self.policy.infer(batch) + np.random.normal(0, 0.001, size=self.last_action.shape)
+            action = self.policy.infer(batch) 
+            action += np.random.normal(0, 0.001, size=action.shape)
             self.last_action = action
         except:
             action = self.last_action + np.random.normal(0, 0.01, size=self.last_action.shape)
