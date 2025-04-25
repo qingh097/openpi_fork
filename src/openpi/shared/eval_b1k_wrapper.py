@@ -126,7 +126,8 @@ class OpenPIWrapper():
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
         # Need to broadcast joint_positions to match action sequence length
         target_joint_positions = action["actions"].copy() 
-        target_joint_positions += np.random.normal(0, 0.001, size=target_joint_positions.shape)
+        if np.all([np.allclose(target_joint_positions[0], target_joint_positions[i]) for i in range(1, target_joint_positions.shape[0])]):
+            target_joint_positions += np.random.normal(0, 0.001, size=target_joint_positions.shape)
         
         # target_joint_positions[0] += joint_positions
         # for i in range(1, target_joint_positions.shape[0]):
