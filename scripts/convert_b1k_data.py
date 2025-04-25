@@ -151,12 +151,16 @@ def main():
                     ) for key in CAMERA_KEYS
             }
 
-            
+            last_action = raw_action[0]
             for step in tqdm(range(seq_length)):
                 # load proprio data
                 proprio_t = proprio_data[step]
                 # create delta action
                 action_t = raw_action[step]
+                if np.linalg.norm(action_t - last_action) < 1e-5:
+                    continue
+                else:
+                    last_action = action_t
                 
                 # get the images for this step
                 images_t = {
