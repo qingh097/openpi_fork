@@ -117,10 +117,10 @@ class OpenPIWrapper():
             "prompt": self.text_prompt,
         }
         try:
-            action = self.policy.infer(batch)
+            action = self.policy.infer(batch) + np.random.normal(0, 0.001, size=self.last_action.shape)
             self.last_action = action
         except:
-            action = self.last_action + np.random.normal(0, 0.001, size=self.last_action.shape)
+            action = self.last_action + np.random.normal(0, 0.01, size=self.last_action.shape)
             print("Error in action prediction, using last action")
         # convert to absolute action and append gripper command
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
