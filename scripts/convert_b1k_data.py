@@ -19,7 +19,8 @@ Running this conversion script will take approximately 30 minutes.
 """
 
 import os 
-os.environ["LEROBOT_HOME"] = "/svl/u/ravenh/data"
+# os.environ["LEROBOT_HOME"] = "/svl/u/ravenh/data"
+os.environ["LEROBOT_HOME"] = "/vision/u/mengdixu/datasets_pi/ravenh/"
 import shutil
 import h5py 
 from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
@@ -30,51 +31,41 @@ import zarr
 from PIL import Image
 from openpi_client.image_tools import resize_with_pad
 
-# RAW_DATASET_FOLDERS = [
-# # "/svl/u/mengdixu/b1k-datagen/mimicgen/datasets/demo_450.hdf5"
-# # "/svl/u/mengdixu/b1k-datagen/mimicgen/datasets/demo_248.hdf5"
-# # "/svl/u/mengdixu/b1k-datagen/brs-algo/datasets/r1_pick_cup_pi.hdf5"
-# "/viscam/projects/momagen/b1k_data/r1_pick_cup_manip_r1_black_pi.hdf5"
-# ]
-# h5_folder_path = "/cvgl2/u/chengshu/mimicgen/datasets/generated_data_mimicgen_format/tidy_table_full"
-h5_folder_path = "/vision/u/chengshu/momagen/pick_cup_full"
+# h5_folder_path = "/vision/u/chengshu/momagen/pick_cup_full"
+# h5_folder_path = '/vision/u/chengshu/momagen/pick_cup_no_vis'
+# h5_folder_path = '/vision/u/chengshu/momagen/pick_cup_only_hard'
+h5_folder_path = '/vision/u/chengshu/momagen/tidy_table_full'
 
 file_names = os.listdir(h5_folder_path)
 file_names = sorted(file_names, key=lambda x: int(x.split("_")[-1]))
+
+# TABLE = False # True for tidy table, False for pick cup
 # RAW_DATASET_FOLDERS = [
-#         os.path.join(h5_folder_path, file_name, "demo_src_r1_tidy_table_task_D0", "demo.hdf5") for file_name in file_names
+#         os.path.join(h5_folder_path, file_name, "demo_src_r1_pick_cup_task_D1", "demo.hdf5") for file_name in file_names
 #     ]
+# LANGUAGE_INSTRUCTIONS = [
+#     "pick up the green mug" for _ in range(len(RAW_DATASET_FOLDERS))
+# ]
+# REPO_NAME = "r1_pick_cup_full_D1"  # Name of the output dataset, also used for the Hugging Face Hub
+
+TABLE = True # True for tidy table, False for pick cup
 RAW_DATASET_FOLDERS = [
-        os.path.join(h5_folder_path, file_name, "demo_src_r1_pick_cup_task_D0", "demo.hdf5") for file_name in file_names
+        os.path.join(h5_folder_path, file_name, "demo_src_r1_tidy_table_task_D0", "demo.hdf5") for file_name in file_names
     ]
 
-
 LANGUAGE_INSTRUCTIONS = [
-    "pick up the green mug" for _ in range(len(RAW_DATASET_FOLDERS))
+    "pick up the mug and place in the sink" for _ in range(len(RAW_DATASET_FOLDERS))
 ]
-# REPO_NAME = "r1_tidy_table_500"  # Name of the output dataset, also used for the Hugging Face Hub
-REPO_NAME = "r1_pick_cup_D0_sorted"  # Name of the output dataset, also used for the Hugging Face Hub
+REPO_NAME = "r1_tidy_table_full_D0_c"  # Name of the output dataset, also used for the Hugging Face Hub
 
 
 CAMERA_KEYS = [
     "obs/robot_r1::robot_r1:eyes:Camera:0::rgb", 
     "obs/robot_r1::robot_r1:left_eef_link:Camera:0::rgb",
     "obs/robot_r1::robot_r1:right_eef_link:Camera:0::rgb"
-    # "obs/external::viewer::rgb", 
-    # "obs/external::viewer::rgb", 
-    # "obs/external::viewer::rgb", 
     
 ] # folder of rgb images
-# CAMERA_KEY_MAPPING = {
-#     "obs/robot_r1::robot_r1:eyes:Camera:0::rgb": "egocentric_camera",
-#     "obs/robot_r1::robot_r1:left_eef_link:Camera:0::rgb": "wrist_image_left",
-#     "obs/robot_r1::robot_r1:right_eef_link:Camera:0::rgb": "wrist_image_right",
-# }
-# CAMERA_KEY_MAPPING = {
-#     "egocentric_camera": "obs/external::viewer::rgb",
-#     "wrist_image_left": "obs/external::viewer::rgb" ,
-#     "wrist_image_right": "obs/external::viewer::rgb",
-# }
+
 CAMERA_KEY_MAPPING = {
     "egocentric_camera": "obs/robot_r1::robot_r1:eyes:Camera:0::rgb",
     "wrist_image_left": "obs/robot_r1::robot_r1:left_eef_link:Camera:0::rgb" ,
@@ -244,14 +235,19 @@ def main():
             
             for idx in tqdm(range(num_demos)):
             # for idx in range(5):
-            
                 demo_id = f'demo_{idx}'
                 print(f"Demo {idx}/{num_demos}: {demo_id} is being processed")
                 demo_data = raw_data["data"][demo_id]
                 # demo_data = raw_data[demo_id]
                 
-                # mask = clean_mask_tidy_table(demo_data)
-                mask = clean_mask_cup(demo_data)
+                if TABLE:
+                    mask = clean_mask_tidy_table(demo_data)
+                else:
+                    try:
+                        mask = clean_mask_cup(demo_data)
+                    except:
+                        print("Error in cleaning mask", f"skipping demo {idx}")
+                        continue
                 
                 # get the proprio data
                 proprio_data = demo_data[STATE_KEY][:][mask]
