@@ -39,6 +39,9 @@ class B1kInputs(transforms.DataTransformFn):
 
         state = data["observation/joint_position"]
         state = transforms.pad_to_dim(state, self.action_dim)
+        if "actions" in data:
+            action =  data["actions"]
+            action = transforms.pad_to_dim(action, self.action_dim)
 
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference
@@ -66,7 +69,7 @@ class B1kInputs(transforms.DataTransformFn):
         }
 
         if "actions" in data:
-            inputs["actions"] = data["actions"]
+            inputs["actions"] = action
 
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]

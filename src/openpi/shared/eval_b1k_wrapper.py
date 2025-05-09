@@ -153,8 +153,8 @@ class OpenPIWrapper():
             exp_weights = exp_weights / exp_weights.sum()
 
             final_action = (actions_current_timestep * exp_weights[:, None]).sum(axis=0)
-            final_action[-8] = target_joint_positions[-8]
-            final_action[-1] = target_joint_positions[-1]
+            final_action[-8] = target_joint_positions[0,-8]
+            final_action[-1] = target_joint_positions[0,-1]
             final_action = final_action[None]
         else:
             final_action = target_joint_positions

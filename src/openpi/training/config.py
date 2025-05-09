@@ -435,6 +435,7 @@ class LeRobotB1kDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
             use_quantile_norm = True,
+            # use_quantile_norm = False,
         )
 
 @dataclasses.dataclass(frozen=True)
@@ -476,8 +477,8 @@ class TrainConfig:
     batch_size: int = 32
     # Number of workers to use for the data loader. Increasing this number will speed up data loading but
     # will increase memory and CPU usage.
-    # num_workers: int = 2
-    num_workers: int = 0
+    num_workers: int = 2
+    # num_workers: int = 0
     # Number of train steps (batches) to run.
     num_train_steps: int = 30_000
 
@@ -646,7 +647,245 @@ _CONFIGS = [
         ).get_freeze_filter(),
         ema_decay=None,
     ),
+    
+    TrainConfig(
+        name="pi0_fast_sim_b1k_1k",
+        model=pi0_fast.Pi0FASTConfig(action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_pick_cup_pi", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(918))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+            action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    TrainConfig(
+        name="pi0_fast_sim_b1k_2k",
+        model=pi0_fast.Pi0FASTConfig(action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_pick_cup_manip_r1_black_pi_0430", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(1990))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+            action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    TrainConfig(
+        name="pi0_fast_sim_b1k_1k_black",
+        model=pi0_fast.Pi0FASTConfig(action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_pick_cup_manip_r1_black_pi", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(997))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+            action_dim=21, action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    # b1k 500
+    TrainConfig(
+        name="pi0_sim_b1k_r1_pick_cup_D0",
+        model=pi0.Pi0Config(action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_pick_cup_D0", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(1990))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
 
+    # b1k 500
+    TrainConfig(
+        name="pi0_sim_b1k_tidy_table_500",
+        model=pi0.Pi0Config(action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_tidy_table_500", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(490))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    
+    # b1k 500
+    TrainConfig(
+        name="pi0_sim_b1k_tidy_table_500_20",
+        model=pi0.Pi0Config(action_horizon=20, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_tidy_table_500", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(490))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=20, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    TrainConfig(
+        name="pi0_sim_b1k_tidy_table_500_50",
+        model=pi0.Pi0Config(action_horizon=50, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_tidy_table_500", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(490))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=50, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    # b1k 248
+    TrainConfig(
+        name="pi0_sim_b1k_450",
+        model=pi0.Pi0Config(action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="blk_demo_450_n", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(448))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+     # b1k 248
+    TrainConfig(
+        name="pi0_sim_b1k_1k",
+        model=pi0.Pi0Config(action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_pick_cup_pi", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(918))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    
+    #b1k 1k
+    TrainConfig(
+        name="pi0_sim_b1k_1k_black",
+        model=pi0.Pi0Config(action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_pick_cup_manip_r1_black_pi", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(997))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+
+    TrainConfig(
+        name="pi0_sim_b1k_2k",
+        model=pi0.Pi0Config(action_horizon=10, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotB1kDataConfig(
+            repo_id="r1_pick_cup_manip_r1_black_pi_0430", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(1990))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            action_horizon=10, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+                                     
     # drawer configs
     # drawer 50
     TrainConfig(

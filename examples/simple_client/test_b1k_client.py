@@ -11,10 +11,10 @@ RESIZE_SIZE = 224
 
 
 openpi_policy = OpenPIWrapper(
-    host='10.79.12.231',
+    host='10.79.12.37',
     port=8000,
     text_prompt="pick up the green mug",
-    control_mode="receeding_horizon",
+    # control_mode="receeding_horizon",
 )
 
 import h5py
