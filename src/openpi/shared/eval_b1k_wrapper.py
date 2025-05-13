@@ -36,10 +36,88 @@ class OpenPIWrapper():
         self.action_queue = deque([],maxlen=10)
         self.last_action = np.zeros((10, 21), dtype=np.float64)
         self.max_len = 8
+        
+        self.replan_interval = 10             # K: replan every 10 steps
+        self.max_len = 50                     # how long the policy sequences are
+        self.temporal_ensemble_max = 5        # max number of sequences to ensemble
+        self.step_counter = 0
     
     def reset(self):
         self.action_queue = deque([],maxlen=10)
         self.last_action = np.zeros((10, 21), dtype=np.float64)
+        self.step_counter = 0
+        
+    def act_receeding_temporal(self, input_obs):
+        # Step 1: check if we should re-run policy
+        if self.step_counter % self.replan_interval == 0:
+            # Run policy every K steps
+            nbatch = copy.deepcopy(input_obs)
+            nbatch["observation"] = nbatch["observation"][:, -1]
+            if nbatch["observation"].shape[-1] != 3:
+                nbatch["observation"] = np.transpose(nbatch["observation"], (0, 1, 3, 4, 2))
+
+            joint_positions = nbatch["proprio"][0, -1]
+            batch = {
+                "observation/egocentric_camera": resize_with_pad(nbatch["observation"][0, 0], RESIZE_SIZE, RESIZE_SIZE),
+                "observation/wrist_image_left": resize_with_pad(nbatch["observation"][0, 1], RESIZE_SIZE, RESIZE_SIZE),
+                "observation/wrist_image_right": resize_with_pad(nbatch["observation"][0, 2], RESIZE_SIZE, RESIZE_SIZE),
+                "observation/joint_position": joint_positions,
+                "prompt": self.text_prompt,
+            }
+
+            try:
+                action = self.policy.infer(batch)
+                self.last_action = action
+            except:
+                action = self.last_action
+                print("Error in action prediction, using last action")
+
+            target_joint_positions = action["actions"].copy()
+
+            # Add this sequence to action queue
+            new_seq = deque([a for a in target_joint_positions[:self.max_len]])
+            self.action_queue.append(new_seq)
+
+            # Optional: limit memory
+            while len(self.action_queue) > self.temporal_ensemble_max:
+                self.action_queue.popleft()
+
+        # Step 2: Smooth across current step from all stored sequences
+        if len(self.action_queue) == 0:
+            raise ValueError("Action queue empty in receeding_temporal mode.")
+
+        actions_current_timestep = np.empty((len(self.action_queue), self.action_queue[0][0].shape[0]))
+
+        for i in range(len(self.action_queue)):
+            actions_current_timestep[i] = self.action_queue[i].popleft()
+
+        # Drop exhausted sequences
+        self.action_queue = deque([q for q in self.action_queue if len(q) > 0])
+
+        # Apply temporal ensemble
+        k = 0.005
+        exp_weights = np.exp(k * np.arange(actions_current_timestep.shape[0]))
+        exp_weights = exp_weights / exp_weights.sum()
+
+        final_action = (actions_current_timestep * exp_weights[:, None]).sum(axis=0)
+
+        # Preserve grippers from most recent rollout
+        final_action[-8] = actions_current_timestep[0, -8]
+        final_action[-1] = actions_current_timestep[0, -1]
+        final_action = final_action[None]
+
+        self.step_counter += 1
+
+        arms_action = final_action[..., 7:]
+        return {
+            "mobile_base": final_action[..., :3],
+            "torso": final_action[..., 3:7],
+            "left_arm": arms_action[..., :6],
+            "left_gripper": arms_action[..., 6:7],
+            "right_arm": arms_action[..., 7:13],
+            "right_gripper": arms_action[..., 13:14],
+        }
+
 
     def act(self, input_obs):
         # TODO reformat data into the correct format for the model
@@ -71,6 +149,9 @@ class OpenPIWrapper():
             Dtype: float64
             Shape: (10, 16)
         """
+        
+        if self.control_mode == 'receeding_temporal':
+            return self.act_receeding_temporal(input_obs)
         
         if self.control_mode == 'receeding_horizon':
             if len(self.action_queue) > 0:
@@ -126,8 +207,8 @@ class OpenPIWrapper():
         # action["actions"] shape: (10, 21), joint_positions shape: (21,)
         # Need to broadcast joint_positions to match action sequence length
         target_joint_positions = action["actions"].copy() 
-        if np.all([np.allclose(target_joint_positions[0], target_joint_positions[i]) for i in range(1, target_joint_positions.shape[0])]):
-            target_joint_positions[:,7:] += np.random.normal(0, 0.001, size=target_joint_positions[:,7:].shape)
+        # if np.all([np.allclose(target_joint_positions[0], target_joint_positions[i]) for i in range(1, target_joint_positions.shape[0])]):
+        #     target_joint_positions[:,7:] += np.random.normal(0, 0.001, size=target_joint_positions[:,7:].shape)
         
         # target_joint_positions[0] += joint_positions
         # for i in range(1, target_joint_positions.shape[0]):

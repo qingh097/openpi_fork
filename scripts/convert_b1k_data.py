@@ -34,7 +34,15 @@ from openpi_client.image_tools import resize_with_pad
 # h5_folder_path = "/vision/u/chengshu/momagen/pick_cup_full"
 # h5_folder_path = '/vision/u/chengshu/momagen/pick_cup_no_vis'
 # h5_folder_path = '/vision/u/chengshu/momagen/pick_cup_only_hard'
-h5_folder_path = '/vision/u/chengshu/momagen/tidy_table_full'
+# h5_folder_path = '/vision/u/chengshu/momagen/tidy_table_full'
+h5_folder_path = "/vision/u/chengshu/mimicgen/pick_cup_full"
+h5_folder_path = "/vision/u/chengshu/skillgen/pick_cup_full"
+h5_folder_path = "/vision/u/chengshu/momagen/tidy_table_full"
+h5_folder_path = "/vision/u/chengshu/mimicgen/tidy_table_full"
+h5_folder_path = "/vision/u/chengshu/skillgen/tidy_table_full"
+h5_folder_path = "/vision/u/chengshu/momagen/tidy_table_no_vis"
+# h5_folder_path = "/vision/u/chengshu/momagen/tidy_table_only_hard"
+h5_folder_path = "/vision/u/chengshu/momagen/tidy_table_only_soft"
 
 file_names = os.listdir(h5_folder_path)
 file_names = sorted(file_names, key=lambda x: int(x.split("_")[-1]))
@@ -43,20 +51,30 @@ file_names = sorted(file_names, key=lambda x: int(x.split("_")[-1]))
 # RAW_DATASET_FOLDERS = [
 #         os.path.join(h5_folder_path, file_name, "demo_src_r1_pick_cup_task_D1", "demo.hdf5") for file_name in file_names
 #     ]
+# RAW_DATASET_FOLDERS = [
+#         os.path.join(h5_folder_path, file_name, "demo_src_r1_pick_cup_mimicgen_task_D0", "demo.hdf5") for file_name in file_names
+#     ]
+# RAW_DATASET_FOLDERS = [
+#         os.path.join(h5_folder_path, file_name, "demo_src_r1_pick_cup_skillgen_task_D0", "demo.hdf5") for file_name in file_names
+#     ]
+
 # LANGUAGE_INSTRUCTIONS = [
 #     "pick up the green mug" for _ in range(len(RAW_DATASET_FOLDERS))
 # ]
-# REPO_NAME = "r1_pick_cup_full_D1"  # Name of the output dataset, also used for the Hugging Face Hub
+# REPO_NAME = "r1_pick_cup_skillgen_D0"  # Name of the output dataset, also used for the Hugging Face Hub
 
 TABLE = True # True for tidy table, False for pick cup
+resume_worker_idx = 0
+resume_demo_idx = 0
 RAW_DATASET_FOLDERS = [
-        os.path.join(h5_folder_path, file_name, "demo_src_r1_tidy_table_task_D0", "demo.hdf5") for file_name in file_names
+        os.path.join(h5_folder_path, file_name, "demo_src_r1_tidy_table_task_D0", "demo.hdf5") for file_name in file_names[resume_worker_idx:]
     ]
 
 LANGUAGE_INSTRUCTIONS = [
     "pick up the mug and place in the sink" for _ in range(len(RAW_DATASET_FOLDERS))
 ]
-REPO_NAME = "r1_tidy_table_full_D0_c"  # Name of the output dataset, also used for the Hugging Face Hub
+REPO_NAME = "r1_tidy_table_only_soft_D0"  # Name of the output dataset, also used for the Hugging Face Hub
+
 
 
 CAMERA_KEYS = [
@@ -179,50 +197,58 @@ def clean_mask_tidy_table(demo_data):
 def main():
     # Clean up any existing dataset in the output directory
     output_path = LEROBOT_HOME / REPO_NAME
-    if output_path.exists():
-        shutil.rmtree(output_path)
+    # if output_path.exists():
+    #     shutil.rmtree(output_path)
     print("Dataset saved to ", output_path)
 
     # Create LeRobot dataset, define features to store
     # OpenPi assumes that proprio is stored in `state` and actions in `action`
     # LeRobot assumes that dtype of image data is `image`
-    dataset = LeRobotDataset.create(
-        repo_id=REPO_NAME,
-        robot_type="panda",
-        fps=15,
-        features={
-            "egocentric_camera": {
-                "dtype": "video",
-                "shape": (RESIZE_SIZE, RESIZE_SIZE, 3),
-                "names": ["height", "width", "channel"],
+    if output_path.exists():
+        print(f"Loading existing dataset from {output_path}")
+        dataset = LeRobotDataset(
+            repo_id=REPO_NAME,
+            local_files_only=True
+        )
+    else:
+        dataset = LeRobotDataset.create(
+            repo_id=REPO_NAME,
+            robot_type="panda",
+            fps=15,
+            features={
+                "egocentric_camera": {
+                    "dtype": "video",
+                    "shape": (RESIZE_SIZE, RESIZE_SIZE, 3),
+                    "names": ["height", "width", "channel"],
+                },
+                "wrist_image_left": {
+                    "dtype": "video",
+                    "shape": (RESIZE_SIZE, RESIZE_SIZE, 3),
+                    "names": ["height", "width", "channel"],
+                },
+                "wrist_image_right": {
+                    "dtype": "video",
+                    "shape": (RESIZE_SIZE, RESIZE_SIZE, 3),
+                    "names": ["height", "width", "channel"],
+                },
+                "joint_position": {
+                    "dtype": "float32",
+                    "shape": (21,),
+                    "names": ["joint_position"],
+                },
+                "actions": {
+                    "dtype": "float32",
+                    "shape": (21,),
+                    "names": ["actions"],
+                },
             },
-            "wrist_image_left": {
-                "dtype": "video",
-                "shape": (RESIZE_SIZE, RESIZE_SIZE, 3),
-                "names": ["height", "width", "channel"],
-            },
-            "wrist_image_right": {
-                "dtype": "video",
-                "shape": (RESIZE_SIZE, RESIZE_SIZE, 3),
-                "names": ["height", "width", "channel"],
-            },
-            "joint_position": {
-                "dtype": "float32",
-                "shape": (21,),
-                "names": ["joint_position"],
-            },
-            "actions": {
-                "dtype": "float32",
-                "shape": (21,),
-                "names": ["actions"],
-            },
-        },
-        image_writer_threads=20,
-        image_writer_processes=10,
-    )
+            image_writer_threads=20,
+            image_writer_processes=10,
+        )
 
     # Loop over raw Libero datasets and write episodes to the LeRobot dataset
     # You can modify this for your own data format
+    first_worker = True
     for raw_dataset_name, language_instruction in zip(RAW_DATASET_FOLDERS, LANGUAGE_INSTRUCTIONS):
         # get all the tasks that are collected that day 
         data_day_dir = raw_dataset_name
@@ -232,11 +258,15 @@ def main():
             # get the number of demos
             num_demos = len(raw_data["data"].keys())
             # num_demos = len(raw_data.keys())
-            
-            for idx in tqdm(range(num_demos)):
+            if first_worker:
+                start_idx = resume_demo_idx
+                first_worker = False
+            else:
+                start_idx = 0
+            for idx in tqdm(range(start_idx, num_demos)):
             # for idx in range(5):
                 demo_id = f'demo_{idx}'
-                print(f"Demo {idx}/{num_demos}: {demo_id} is being processed")
+                print(f"Demo {idx}/{num_demos}: {demo_id} is being processed in {data_day_dir}")
                 demo_data = raw_data["data"][demo_id]
                 # demo_data = raw_data[demo_id]
                 
