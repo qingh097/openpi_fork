@@ -18,6 +18,7 @@ class CosineDecaySchedule(LRScheduleConfig):
 
     warmup_steps: int = 1_000
     peak_lr: float = 2.5e-5
+    # peak_lr: float = 5e-5
     decay_steps: int = 30_000
     decay_lr: float = 2.5e-6
 
