@@ -43,11 +43,15 @@ h5_folder_path = "/vision/u/chengshu/skillgen/tidy_table_full"
 h5_folder_path = "/vision/u/chengshu/momagen/tidy_table_no_vis"
 # h5_folder_path = "/vision/u/chengshu/momagen/tidy_table_only_hard"
 h5_folder_path = "/vision/u/chengshu/momagen/tidy_table_only_soft"
+h5_folder_path = "/vision/u/chengshu/momagen/clean_pan_full"
 
 file_names = os.listdir(h5_folder_path)
 file_names = sorted(file_names, key=lambda x: int(x.split("_")[-1]))
 
-# TABLE = False # True for tidy table, False for pick cup
+resume_worker_idx = 3
+resume_demo_idx = 28
+
+TABLE = False # True for tidy table, False for pick cup
 # RAW_DATASET_FOLDERS = [
 #         os.path.join(h5_folder_path, file_name, "demo_src_r1_pick_cup_task_D1", "demo.hdf5") for file_name in file_names
 #     ]
@@ -63,18 +67,27 @@ file_names = sorted(file_names, key=lambda x: int(x.split("_")[-1]))
 # ]
 # REPO_NAME = "r1_pick_cup_skillgen_D0"  # Name of the output dataset, also used for the Hugging Face Hub
 
-TABLE = True # True for tidy table, False for pick cup
-resume_worker_idx = 0
-resume_demo_idx = 0
+# TABLE = True # True for tidy table, False for pick cup
+
+# RAW_DATASET_FOLDERS = [
+#         os.path.join(h5_folder_path, file_name, "demo_src_r1_tidy_table_task_D0", "demo.hdf5") for file_name in file_names[resume_worker_idx:]
+#     ]
+
+# LANGUAGE_INSTRUCTIONS = [
+#     "pick up the mug and place in the sink" for _ in range(len(RAW_DATASET_FOLDERS))
+# ]
+# REPO_NAME = "r1_tidy_table_only_soft_D0"  # Name of the output dataset, also used for the Hugging Face Hub
+
+PAN = True # True for tidy table, False for pick cup
+
 RAW_DATASET_FOLDERS = [
-        os.path.join(h5_folder_path, file_name, "demo_src_r1_tidy_table_task_D0", "demo.hdf5") for file_name in file_names[resume_worker_idx:]
+        os.path.join(h5_folder_path, file_name, "demo_src_r1_clean_pan_task_D0", "demo.hdf5") for file_name in file_names[resume_worker_idx:]
     ]
 
 LANGUAGE_INSTRUCTIONS = [
-    "pick up the mug and place in the sink" for _ in range(len(RAW_DATASET_FOLDERS))
+    "clean the pan" for _ in range(len(RAW_DATASET_FOLDERS))
 ]
-REPO_NAME = "r1_tidy_table_only_soft_D0"  # Name of the output dataset, also used for the Hugging Face Hub
-
+REPO_NAME = "r1_clean_pan_D0"  # Name of the output dataset, also used for the Hugging Face Hub
 
 
 CAMERA_KEYS = [
@@ -141,6 +154,46 @@ def remove_no_act_segment_tidy_table(traj, gripper_position, seg_mask, window_si
     return act_mask
 
 
+def remove_no_act_segment_clean_pan(traj, gripper_position, seg_mask, window_size=5, tol=1e-3):
+    # construct a mask for the trajectory
+    act_mask = np.ones(traj.shape[0], dtype=bool)
+    for i in range(0, len(seg_mask)-window_size):
+        # get the following window_size 
+        start_pose = np.concatenate([traj[i], gripper_position[i][None]])
+        end_pose = np.concatenate([traj[i+window_size], gripper_position[i+window_size][None]])
+        if np.allclose(start_pose, end_pose, atol=tol):
+            for i_i in range(i+1, i+window_size+1):
+                if seg_mask[i_i] == 1:
+                    # only remove the step if it is in the replay segment
+                    act_mask[i_i] = False
+                    # print('remove segment', i_i)
+    return act_mask
+
+def process_seg_mask_clean_pan(demo_data):
+    # customize for the clean pan task 
+    # mobile mp, arm mp, arm replay, mobile mp, arm mp, arm replay
+    # mobile mp, arm_mp, arm replay, mobile mp, arm mp, arm replay, arm_mp, arm replay
+    # process segmentation mask 
+    num_steps = demo_data['actions'].shape[0] - 1
+    subtask_lengths = np.array(demo_data["subtask_lengths"])
+    left_mp_ranges = np.array(demo_data["left_mp_ranges"])
+    right_mp_ranges = np.array(demo_data["right_mp_ranges"])
+
+    # for replay mask, 0, 0, 1, 0, 0, 1
+    # for replay mask, 0, 0, 1, 0, 0, 1, 0, 1
+    replay_seg_mask = np.zeros((num_steps, 1), dtype=bool)
+    replay_seg_mask[left_mp_ranges[1,1]:left_mp_ranges[2,0], 0] = True
+    replay_seg_mask[left_mp_ranges[3,1]:left_mp_ranges[4,0], 0] = True
+    replay_seg_mask[left_mp_ranges[4,1]:, 0] = True
+
+    # for manipulation mask, 0, 1, 1, 0, 1, 1
+    # for manipulation mask, 0, 1, 1, 0, 1, 1, 1, 1
+    manip_seg_mask = np.zeros((num_steps, 1), dtype=bool)
+    manip_seg_mask[left_mp_ranges[1,0]:left_mp_ranges[2,0], 0] = True
+    manip_seg_mask[left_mp_ranges[3,0]:, 0] = True
+
+    return replay_seg_mask, manip_seg_mask
+
 def process_seg_mask_nav_manip(demo_data):
     # process segmentation mask 
     num_steps = demo_data['actions'].shape[0] - 1
@@ -191,6 +244,14 @@ def clean_mask_tidy_table(demo_data):
     left_eef_traj = np.array(demo_data['obs/prop_eef_state'][:, 13:20]) # num_steps, 7
     left_gripper_position = np.array(demo_data['obs/prop_eef_state'][:,20]) # num_steps, 7
     act_mask = remove_no_act_segment_tidy_table(left_eef_traj, left_gripper_position, seg_mask, window_size=5, tol=1e-3)
+    
+    return act_mask 
+
+def clean_mask_clean_pan(demo_data):
+    seg_mask = process_seg_mask_clean_pan(demo_data)
+    left_eef_traj = np.array(demo_data['obs/prop_eef_state'][:, 13:20]) # num_steps, 7
+    left_gripper_position = np.array(demo_data['obs/prop_eef_state'][:,20]) # num_steps, 7
+    act_mask = remove_no_act_segment_clean_pan(left_eef_traj, left_gripper_position, seg_mask, window_size=5, tol=1e-3)
     
     return act_mask 
     
@@ -272,6 +333,8 @@ def main():
                 
                 if TABLE:
                     mask = clean_mask_tidy_table(demo_data)
+                elif PAN:
+                    mask = clean_mask_clean_pan(demo_data)
                 else:
                     try:
                         mask = clean_mask_cup(demo_data)
