@@ -22,6 +22,7 @@ import openpi.policies.droid_policy as droid_policy
 import openpi.policies.yumi_policy as yumi_policy
 import openpi.policies.b1k_policy as b1k_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.ft_policy as ft_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.optimizer as _optimizer
@@ -477,6 +478,46 @@ class LeRobotB1kR1PDataConfig(DataConfigFactory):
             # use_quantile_norm = False,
         )
 
+        
+@dataclasses.dataclass(frozen=True)
+class LeRobotFrankaTessoloDataConfig(DataConfigFactory):
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Make inputs look like they come from the Libero environment
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/wrist_image_left": "wrist_image_left",
+                        "observation/wrist_image_right": "wrist_image_right",
+                        "observation/joint_position": "joint_position",
+                        "human_reference": "human_reference",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # Prepare data for policy training
+        # Convert images to uint8 numpy arrays, add masks
+        data_transforms = _transforms.Group(
+            inputs=[ft_policy.FtInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
+            outputs=[ft_policy.FtOutputs(action_dim=54)],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            use_quantile_norm = True,
+            # use_quantile_norm = False,
+        )
+        
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
@@ -672,6 +713,32 @@ _CONFIGS = [
             action_dim=8, action_horizon=10, paligemma_variant="gemma_2b_lora"
         ).get_freeze_filter(),
         ema_decay=None,
+    ),
+    
+    
+    # dexs2r configs
+    # dexs2r r1p
+    TrainConfig(
+        name="pi0_dexs2r",
+        model=pi0.Pi0Config( action_horizon=50, paligemma_variant="gemma_2b_lora"),
+        data=LeRobotFrankaTessoloDataConfig(
+            repo_id="dex_open_box_20251031_020846", # coffee maker 5k updated
+            base_config=DataConfig(
+                local_files_only=True, 
+                prompt_from_task=True,
+                episodes_index=list(range(5000))
+                # episodes_index=list(range(4))
+                
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+             action_horizon=50, paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        val_repo_id="dex_open_box_20251031_020846",
+        val_episodes_index=list(range(5000,5019)),
     ),
     
     # b1k configs

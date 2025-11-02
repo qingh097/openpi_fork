@@ -44,7 +44,11 @@ class TransformedDataset(Dataset[T_co]):
         self._transform = _transforms.compose(transforms)
 
     def __getitem__(self, index: SupportsIndex) -> T_co:
-        return self._transform(self._dataset[index])
+        try:
+            return self._transform(self._dataset[index])
+        except:
+            index = np.random.randint(0, len(self._dataset))
+            return self.__getitem__(index)
 
     def __len__(self) -> int:
         return len(self._dataset)

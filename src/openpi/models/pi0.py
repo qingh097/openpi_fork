@@ -74,6 +74,8 @@ class Pi0Config(_model.BaseModelConfig):
     action_dim: int = 32
     action_horizon: int = 50
     max_token_len: int = 48
+    extra_action_dim: int = 54
+    extra_state_dim: int = 414
 
     @property
     @override
@@ -165,11 +167,15 @@ class Pi0(_model.BaseModel):
         )
         img.lazy_init(next(iter(config.fake_obs().images.values())), train=False, rngs=rngs)
         self.PaliGemma = nnx.Dict(llm=llm, img=img)
+        self.extra_state_proj = nnx.Linear(config.extra_state_dim, config.action_dim, rngs=rngs)
         self.state_proj = nnx.Linear(config.action_dim, action_expert_config.width, rngs=rngs)
+        self.extra_action_in_proj = nnx.Linear(config.extra_action_dim, config.action_dim, rngs=rngs)
         self.action_in_proj = nnx.Linear(config.action_dim, action_expert_config.width, rngs=rngs)
         self.action_time_mlp_in = nnx.Linear(2 * action_expert_config.width, action_expert_config.width, rngs=rngs)
         self.action_time_mlp_out = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
         self.action_out_proj = nnx.Linear(action_expert_config.width, config.action_dim, rngs=rngs)
+        self.extra_action_out_proj = nnx.Linear(config.action_dim, config.extra_action_dim, rngs=rngs)
+        
 
     @at.typecheck
     def embed_prefix(
@@ -213,7 +219,9 @@ class Pi0(_model.BaseModel):
         ar_mask = []
         tokens = []
         # add a single state token
-        state_token = self.state_proj(obs.state)[:, None, :]
+        extra_state_token = self.extra_state_proj(obs.state)
+        state_token = self.state_proj(extra_state_token)[:, None, :]
+        # state_token = self.state_proj(obs.state)[:, None, :]
         tokens.append(state_token)
         input_mask.append(jnp.ones((obs.state.shape[0], 1), dtype=jnp.bool_))
         # image/language inputs do not attend to state or actions
@@ -222,7 +230,9 @@ class Pi0(_model.BaseModel):
         # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = posemb_sincos(timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0)
         # mix timestep + action information using an MLP
-        action_tokens = self.action_in_proj(noisy_actions)
+        extra_action_tokens = self.extra_action_in_proj(noisy_actions)
+        action_tokens = self.action_in_proj(extra_action_tokens)
+        # action_tokens = self.action_in_proj(noisy_actions)
         time_tokens = einops.repeat(time_emb, "b emb -> b s emb", s=self.action_horizon)
         action_time_tokens = jnp.concatenate([action_tokens, time_tokens], axis=-1)
         action_time_tokens = self.action_time_mlp_in(action_time_tokens)
@@ -262,6 +272,7 @@ class Pi0(_model.BaseModel):
             [prefix_tokens, suffix_tokens], mask=attn_mask, positions=positions
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+        v_t = self.extra_action_out_proj(v_t)
 
         return jnp.mean(jnp.square(v_t - u_t), axis=-1)
 
@@ -313,6 +324,7 @@ class Pi0(_model.BaseModel):
             )
             assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+            v_t = self.extra_action_out_proj(v_t)
 
             return x_t + dt * v_t, time + dt
 
