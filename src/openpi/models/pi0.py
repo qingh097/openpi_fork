@@ -166,6 +166,7 @@ class Pi0(_model.BaseModel):
             )
         )
         img.lazy_init(next(iter(config.fake_obs().images.values())), train=False, rngs=rngs)
+        self.extra_action_dim = config.extra_action_dim
         self.PaliGemma = nnx.Dict(llm=llm, img=img)
         self.extra_state_proj = nnx.Linear(config.extra_state_dim, config.action_dim, rngs=rngs)
         self.state_proj = nnx.Linear(config.action_dim, action_expert_config.width, rngs=rngs)
@@ -289,7 +290,8 @@ class Pi0(_model.BaseModel):
         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
         dt = -1.0 / num_steps
         batch_size = observation.state.shape[0]
-        noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
+        # noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
+        noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.extra_action_dim))
 
         # first fill KV cache with a forward pass of the prefix
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)

@@ -41,9 +41,11 @@ class Policy(BasePolicy):
     def infer(self, obs: dict) -> dict:  # type: ignore[misc]
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
-        inputs = self._input_transform(inputs)
-        # Make a batch and convert to jax.Array.
-        inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
+        # inputs = self._input_transform(inputs)
+        batched_transform = jax.vmap(self._input_transform)
+        inputs = batched_transform(inputs)
+        # # Make a batch and convert to jax.Array.
+        # inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
 
         self._rng, sample_rng = jax.random.split(self._rng)
         outputs = {
@@ -52,7 +54,8 @@ class Policy(BasePolicy):
         }
 
         # Unbatch and convert to np.ndarray.
-        outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
+        # outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
+        outputs = jax.tree.map(lambda x: np.asarray(x), outputs)
         return self._output_transform(outputs)
 
     @property
