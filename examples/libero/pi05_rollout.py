@@ -1,5 +1,6 @@
 import collections
 import dataclasses
+import json
 import logging
 import math
 import pathlib
@@ -14,9 +15,14 @@ from openpi_client import websocket_client_policy as _websocket_client_policy
 import tqdm
 import tyro
 import random
-from robosuite.utils.binding_utils import MjSimState
-import torch
+import robosuite.utils.transform_utils as T
+import robosuite.macros as macros
+
+import libero.libero.envs.bddl_utils as BDDLUtils
+import h5py
 import os
+from robosuite.utils.binding_utils import MjSimState
+
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256  # resolution used to render training data
@@ -36,10 +42,10 @@ class Args:
     # LIBERO environment-specific parameters
     #################################################################################################################
     task_suite_name: str = (
-        "libero_goal"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
+        "libero_object_unseen"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
     )
-    num_steps_wait: int = 20  # Number of steps to wait for objects to stabilize i n sim
-    num_trials_per_task: int = 3  # Number of rollouts per task
+    num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize i n sim
+    num_trials_per_task: int = 50  # Number of rollouts per task
 
     #################################################################################################################
     # Utils
@@ -47,7 +53,6 @@ class Args:
     video_out_path: str = "data/libero/videos"  # Path to save videos
 
     seed: int = 7  # Random Seed (for reproducibility)
-
 
 def random_initial_states(env, initial_states):
     #sample an array of 50,4 floats between 0 and 0.01
@@ -88,7 +93,7 @@ def eval_libero(args: Args) -> None:
         raise ValueError(f"Unknown task suite: {args.task_suite_name}")
 
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
-
+    
     # Start evaluation
     total_episodes, total_successes = 0, 0
     for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
@@ -100,12 +105,28 @@ def eval_libero(args: Args) -> None:
         # Initialize LIBERO environment and task description
         env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
         initial_states = random_initial_states(env, initial_states)
-        SAVE_INIT_STATES = False
+        
+        data_folder = f'/viscam/projects/dexs2r/libero_data/custom_data/{args.task_suite_name}'
+        os.makedirs(data_folder, exist_ok=True)
+        hdf5_path = f'{data_folder}/{task_description.replace(" ","_")}.hdf5'
+        h5py_f = h5py.File(hdf5_path, "w")
+
+        grp = h5py_f.create_group("data")
+
+        grp.attrs["env_name"] = env.problem_name
+        bddl_file_name = env.env.bddl_file_name
+        problem_info = BDDLUtils.get_problem_info(bddl_file_name)
+        grp.attrs["problem_info"] = json.dumps(problem_info)
+        grp.attrs["macros_image_convention"] = macros.IMAGE_CONVENTION
+        grp.attrs["bddl_file_name"] = str(bddl_file_name.relative_to('/svl/u/ravenh/lacwm/LIBERO/'))
+        grp.attrs["bddl_file_content"] = open(bddl_file_name, "r").read()
         
         # Start episodes
         task_episodes, task_successes = 0, 0
         for episode_idx in tqdm.tqdm(range(args.num_trials_per_task)):
             logging.info(f"\nTask: {task_description}")
+            
+            model_xml = env.sim.model.get_xml()
 
             # Reset environment
             env.reset()
@@ -117,6 +138,19 @@ def eval_libero(args: Args) -> None:
             # Setup
             t = 0
             replay_images = []
+            
+            ###
+            ee_states = []
+            gripper_states = []
+            joint_states = []
+            robot_states = []
+            agentview_images = []
+            eye_in_hand_images = []
+            actions = []
+            states = []
+            rewards = []
+            dones = []
+            ####
 
             logging.info(f"Starting episode {task_episodes+1}...")
             while t < max_steps + args.num_steps_wait:
@@ -128,17 +162,22 @@ def eval_libero(args: Args) -> None:
                         t += 1
                         continue
                     
-                    if SAVE_INIT_STATES:
-                        cur_state = env.sim.get_state().flatten()
-                        save_init_state = cur_state[None].repeat(50, axis=0)
-                        init_states_path = os.path.join(
-                            get_libero_path("init_states"),
-                            task_suite.tasks[task_id].problem_folder,
-                            task_suite.tasks[task_id].init_states_file,
+                    state_playback = env.sim.get_state().flatten()
+                    states.append(state_playback)
+                    gripper_states.append(obs["robot0_gripper_qpos"])
+                    joint_states.append(obs["robot0_joint_pos"])
+                    ee_states.append(
+                        np.hstack(
+                            (
+                                obs["robot0_eef_pos"],
+                                T.quat2axisangle(obs["robot0_eef_quat"]),
+                            )
                         )
-                        torch.save(save_init_state, init_states_path)   
-                        SAVE_INIT_STATES = False 
-                                        
+                    )
+                    robot_states.append(env.env.get_robot_state_vector(obs))
+                    agentview_images.append(obs["agentview_image"])
+                    eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
+
                     # Get preprocessed image
                     # IMPORTANT: rotate 180 degrees to match train preprocessing
                     img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
@@ -178,6 +217,8 @@ def eval_libero(args: Args) -> None:
 
                     action = action_plan.popleft()
 
+                    actions.append(action)
+
                     # Execute action in environment
                     obs, reward, done, info = env.step(action.tolist())
                     if done:
@@ -189,6 +230,38 @@ def eval_libero(args: Args) -> None:
                 except Exception as e:
                     logging.error(f"Caught exception: {e}")
                     break
+                
+                
+            #save to hdf5 file
+            dones = np.zeros(len(actions)).astype(np.uint8)
+            dones[-1] = 1 if done else 0
+            rewards = np.zeros(len(actions)).astype(np.uint8)
+            rewards[-1] = 1 if done else 0
+            
+            ep_data_grp = grp.create_group(f"demo_{episode_idx}")
+            obs_grp = ep_data_grp.create_group("obs")
+            obs_grp.create_dataset(
+                "gripper_states", data=np.stack(gripper_states, axis=0)
+            )
+            obs_grp.create_dataset("joint_states", data=np.stack(joint_states, axis=0))
+            obs_grp.create_dataset("ee_states", data=np.stack(ee_states, axis=0))
+            obs_grp.create_dataset("ee_pos", data=np.stack(ee_states, axis=0)[:, :3])
+            obs_grp.create_dataset("ee_ori", data=np.stack(ee_states, axis=0)[:, 3:])
+
+            obs_grp.create_dataset("agentview_rgb", data=np.stack(agentview_images, axis=0))
+            obs_grp.create_dataset(
+                "eye_in_hand_rgb", data=np.stack(eye_in_hand_images, axis=0)
+            )
+
+            ep_data_grp.create_dataset("actions", data=actions)
+            ep_data_grp.create_dataset("states", data=states)
+            ep_data_grp.create_dataset("robot_states", data=np.stack(robot_states, axis=0))
+            ep_data_grp.create_dataset("rewards", data=rewards)
+            ep_data_grp.create_dataset("dones", data=dones)
+            ep_data_grp.attrs["num_samples"] = len(agentview_images)
+            ep_data_grp.attrs["model_file"] = model_xml
+            ep_data_grp.attrs["init_state"] = states[0]
+            ep_data_grp.attrs["success"] = True if done else False
 
             task_episodes += 1
             total_episodes += 1
@@ -206,7 +279,13 @@ def eval_libero(args: Args) -> None:
             logging.info(f"Success: {done}")
             logging.info(f"# episodes completed so far: {total_episodes}")
             logging.info(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)")
+        
+        grp.attrs["num_demos"] = task_episodes
+        grp.attrs["total"] = task_episodes
+        env.close()
 
+        h5py_f.close()
+        
         # Log final results
         logging.info(f"Current task success rate: {float(task_successes) / float(task_episodes)}")
         logging.info(f"Current total success rate: {float(total_successes) / float(total_episodes)}")
