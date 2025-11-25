@@ -60,6 +60,7 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, log_code: bool = 
         wandb.init(id=run_id, resume="must", project=config.project_name)
     else:
         wandb.init(
+            entity='Project_VIT',
             name=config.exp_name,
             config=dataclasses.asdict(config),
             project=config.project_name,
