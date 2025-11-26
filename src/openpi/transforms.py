@@ -187,7 +187,11 @@ class ResizeImages(DataTransformFn):
     width: int
 
     def __call__(self, data: DataDict) -> DataDict:
-        data["image"] = {k: image_tools.resize_with_pad(v, self.height, self.width) for k, v in data["image"].items()}
+        for k, v in data["image"].items():
+            if isinstance(v, jax.Array):
+                data["image"][k] = image_tools.resize_with_pad_jax(v, self.height, self.width)
+            else:
+                data["image"][k] = image_tools.resize_with_pad(v, self.height, self.width)
         return data
 
 
@@ -244,6 +248,68 @@ class AbsoluteActions(DataTransformFn):
         return data
 
 
+# @dataclasses.dataclass(frozen=True)
+# class TokenizePrompt(DataTransformFn):
+#     tokenizer: _tokenizer.PaligemmaTokenizer
+#     discrete_state_input: bool = False
+
+#     def __call__(self, data: DataDict) -> DataDict:
+#         if (prompt := data.pop("prompt", None)) is None:
+#             raise ValueError("Prompt is required")
+
+#         # For Pi05 models we need state for tokenization.
+#         if self.discrete_state_input and (state := data.get("state", None)) is None:
+#             raise ValueError("State is required.")
+
+#         def _to_prompt_list(p):
+#             if isinstance(p, str):
+#                 return [p]
+#             if isinstance(p, (list, tuple)):
+#                 return [str(x) for x in p]
+#             if isinstance(p, np.ndarray):
+#                 # np arrays of strings or objects
+#                 return [str(x) for x in p.tolist()]
+#             # Backwards-compatible: numpy scalar
+#             try:
+#                 return [str(p.item())]
+#             except Exception as exc:
+#                 raise ValueError(f"Unsupported prompt type: {type(p)}") from exc
+
+#         prompt_list = _to_prompt_list(prompt)
+
+#         if self.discrete_state_input:
+#             state_arr = np.asarray(state)
+#             # If a single prompt is provided with batched states, reuse the prompt.
+#             target_batch = state_arr.shape[0] if state_arr.ndim > 0 else 1
+#             if len(prompt_list) not in (1, target_batch):
+#                 raise ValueError(f"Prompt batch ({len(prompt_list)}) must match state batch ({target_batch})")
+#             prompts = prompt_list if len(prompt_list) == target_batch else prompt_list * target_batch
+#             tokens, masks = zip(*[self.tokenizer.tokenize(p, s) for p, s in zip(prompts, state_arr)])
+#             tokens = np.stack(tokens, axis=0)
+#             masks = np.stack(masks, axis=0)
+#         else:
+#             # No discrete state in prompt; we can reuse tokenization if prompt is shared.
+#             if len(prompt_list) == 1:
+#                 # Infer batch size from existing batched fields if available.
+#                 batch_size = None
+#                 if "state" in data and hasattr(data["state"], "shape") and data["state"].shape:
+#                     batch_size = data["state"].shape[0]
+#                 elif "image" in data and len(data["image"]) > 0:
+#                     any_img = next(iter(data["image"].values()))
+#                     if hasattr(any_img, "shape") and any_img.shape:
+#                         batch_size = any_img.shape[0]
+#                 token, mask = self.tokenizer.tokenize(prompt_list[0], None)
+#                 if batch_size is None or batch_size == 1:
+#                     tokens, masks = token, mask
+#                 else:
+#                     tokens = np.broadcast_to(token, (batch_size,) + token.shape)
+#                     masks = np.broadcast_to(mask, (batch_size,) + mask.shape)
+#             else:
+#                 tokens_list, masks_list = zip(*[self.tokenizer.tokenize(p, None) for p in prompt_list])
+#                 tokens = np.stack(tokens_list, axis=0)
+#                 masks = np.stack(masks_list, axis=0)
+
+#         return {**data, "tokenized_prompt": tokens, "tokenized_prompt_mask": masks}
 @dataclasses.dataclass(frozen=True)
 class TokenizePrompt(DataTransformFn):
     tokenizer: _tokenizer.PaligemmaTokenizer
@@ -420,7 +486,14 @@ def apply_tree(
     return unflatten_dict({k: transform(k, v) for k, v in tree.items()})
 
 
-def pad_to_dim(x: np.ndarray, target_dim: int, axis: int = -1, value: float = 0.0) -> np.ndarray:
+def pad_to_dim(x: np.ndarray | jax.Array, target_dim: int, axis: int = -1, value: float = 0.0) -> np.ndarray | jax.Array:
+    """Pad an array to the target dimension with zeros along the specified axis."""
+    if isinstance(x, jax.Array):
+        return pad_to_dim_jax(x, target_dim, axis, value)
+    else:
+        return pad_to_dim_np(x, target_dim, axis, value)
+
+def pad_to_dim_np(x: np.ndarray, target_dim: int, axis: int = -1, value: float = 0.0) -> np.ndarray:
     """Pad an array to the target dimension with zeros along the specified axis."""
     current_dim = x.shape[axis]
     if current_dim < target_dim:
@@ -429,6 +502,14 @@ def pad_to_dim(x: np.ndarray, target_dim: int, axis: int = -1, value: float = 0.
         return np.pad(x, pad_width, constant_values=value)
     return x
 
+def pad_to_dim_jax(x: jax.Array, target_dim: int, axis: int = -1, value: float = 0.0) -> jax.Array:
+    """Pad an array to the target dimension with zeros along the specified axis."""
+    current_dim = x.shape[axis]
+    if current_dim < target_dim:
+        pad_width = [(0, 0, 0)] * len(x.shape)
+        pad_width[axis] = (0, target_dim - current_dim, 0)
+        return jax.lax.pad(x, value, pad_width)
+    return x
 
 def make_bool_mask(*dims: int) -> tuple[bool, ...]:
     """Make a boolean mask for the given dimensions.

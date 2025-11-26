@@ -6,6 +6,8 @@ import numpy as np
 from openpi import transforms
 from openpi.models import model as _model
 
+import jax
+import jax.numpy as jnp
 
 def make_libero_example() -> dict:
     """Creates a random input example for the Libero policy."""
@@ -25,6 +27,13 @@ def _parse_image(image) -> np.ndarray:
         image = einops.rearrange(image, "c h w -> h w c")
     return image
 
+def _parse_image_jax(image):
+    image = jnp.asarray(image)
+    if jnp.issubdtype(image.dtype, jnp.floating):
+        image = (255.0 * image).astype(jnp.uint8)
+    if image.shape[0] == 3:
+        image = einops.rearrange(image, "c h w -> h w c")
+    return image
 
 @dataclasses.dataclass(frozen=True)
 class LiberoInputs(transforms.DataTransformFn):
@@ -49,8 +58,24 @@ class LiberoInputs(transforms.DataTransformFn):
         # and two wrist views (left and right). If your dataset does not have a particular type
         # of image, e.g. wrist images, you can comment it out here and replace it with zeros like we do for the
         # right wrist image below.
-        base_image = _parse_image(data["observation/image"])
-        wrist_image = _parse_image(data["observation/wrist_image"])
+        if isinstance(data["observation/image"], jax.Array):
+            base_image = _parse_image_jax(data["observation/image"])
+            wrist_image = _parse_image_jax(data["observation/wrist_image"])
+            right_wrist_0_rgb = jnp.zeros_like(base_image)
+            image_mask = {
+                "base_0_rgb": jnp.bool_(True),
+                "left_wrist_0_rgb": jnp.bool_(True),
+                "right_wrist_0_rgb": jnp.bool_(True) if self.model_type == _model.ModelType.PI0_FAST else jnp.bool_(False),
+            }
+        else:
+            base_image = _parse_image(data["observation/image"])
+            wrist_image = _parse_image(data["observation/wrist_image"])
+            right_wrist_0_rgb = np.zeros_like(base_image)
+            image_mask = {
+                "base_0_rgb": np.True_,
+                "left_wrist_0_rgb": np.True_,
+                "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
+            }
 
         # Create inputs dict. Do not change the keys in the dict below.
         inputs = {
@@ -59,14 +84,9 @@ class LiberoInputs(transforms.DataTransformFn):
                 "base_0_rgb": base_image,
                 "left_wrist_0_rgb": wrist_image,
                 # Pad any non-existent images with zero-arrays of the appropriate shape.
-                "right_wrist_0_rgb": np.zeros_like(base_image),
+                "right_wrist_0_rgb": right_wrist_0_rgb,
             },
-            "image_mask": {
-                "base_0_rgb": np.True_,
-                "left_wrist_0_rgb": np.True_,
-                # We only mask padding images for pi0 model, not pi0-FAST. Do not change this for your own dataset.
-                "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
-            },
+            "image_mask": image_mask,
         }
 
         # Pad actions to the model action dimension. Keep this for your own dataset.
@@ -97,4 +117,4 @@ class LiberoOutputs(transforms.DataTransformFn):
         # dimension, we need to now parse out the correct number of actions in the return dict.
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        return {"actions": np.asarray(data["actions"][..., :7])}

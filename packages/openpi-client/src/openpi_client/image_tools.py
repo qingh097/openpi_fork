@@ -1,6 +1,7 @@
 import numpy as np
 from PIL import Image
-
+import jax.numpy as jnp
+import jax
 
 def convert_to_uint8(img: np.ndarray) -> np.ndarray:
     """Converts an image to uint8 if it is a float image.
@@ -33,6 +34,26 @@ def resize_with_pad(images: np.ndarray, height: int, width: int, method=Image.BI
     images = images.reshape(-1, *original_shape[-3:])
     resized = np.stack([_resize_with_pad_pil(Image.fromarray(im), height, width, method=method) for im in images])
     return resized.reshape(*original_shape[:-3], *resized.shape[-3:])
+
+
+def resize_with_pad_jax(image, target_h, target_w):
+    h, w = image.shape[:2]
+    scale = jnp.minimum(target_h / h, target_w / w)
+    new_h = jnp.round(h * scale).astype(int)
+    new_w = jnp.round(w * scale).astype(int)
+    image = jax.image.resize(image, (new_h, new_w, image.shape[-1]), method="bilinear")
+
+    pad_h = target_h - new_h
+    pad_w = target_w - new_w
+    pad_top = pad_h // 2
+    pad_left = pad_w // 2
+    image = jnp.pad(
+        image,
+        ((pad_top, pad_h - pad_top), (pad_left, pad_w - pad_left), (0, 0)),
+        mode="constant",
+        constant_values=0,
+    )
+    return image
 
 
 def _resize_with_pad_pil(image: Image.Image, height: int, width: int, method: int) -> Image.Image:
