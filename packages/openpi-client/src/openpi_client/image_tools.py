@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
-import jax.numpy as jnp
-import jax
+# import jax.numpy as jnp
+# import jax
 
 def convert_to_uint8(img: np.ndarray) -> np.ndarray:
     """Converts an image to uint8 if it is a float image.

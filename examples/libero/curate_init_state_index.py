@@ -52,7 +52,7 @@ def curate_goal_images(root_folder):
 root_folder = '/viscam/projects/dexs2r/libero_init/libero_object_unseen'
 agentview_goal_images_all, wrist_goal_images_all = curate_goal_images(root_folder)
 
-if True:
+if False:
     #visualize the goal images by saving to video
     for task, agentview_goal_images in agentview_goal_images_all.items():
         for i in range(len(agentview_goal_images)):
@@ -64,10 +64,19 @@ if True:
             video_path = os.path.join(root_folder,f'{task}_wrist_goal_images_{i}.mp4')
             imageio.mimsave(video_path, wrist_image)
 
+agentview_h5 = h5py.File(os.path.join(root_folder,f'agentview_goal_images.h5'), 'w')
 for task, agentview_goal_images in agentview_goal_images_all.items():
-    torch.save(agentview_goal_images, os.path.join(root_folder,f'{task}_agentview_goal_images.pt'))
+    task_gp = agentview_h5.create_group(f'{task}')
+    for i in range(len(agentview_goal_images)):
+        task_gp.create_dataset(f'{i}', data=agentview_goal_images[i])
+agentview_h5.close()
+
+wrist_h5 = h5py.File(os.path.join(root_folder,f'wrist_goal_images.h5'), 'w')
 for task, wrist_goal_images in wrist_goal_images_all.items():
-    torch.save(wrist_goal_images, os.path.join(root_folder,f'{task}_wrist_goal_images.pt'))
+    task_gp = wrist_h5.create_group(f'{task}')
+    for i in range(len(wrist_goal_images)):
+        task_gp.create_dataset(f'{i}', data=wrist_goal_images[i])
+wrist_h5.close()
 
 
 # init_state = curate_init_state_index(root_folder)
