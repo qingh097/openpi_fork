@@ -1,7 +1,6 @@
 import numpy as np
 from PIL import Image
-# import jax.numpy as jnp
-# import jax
+
 
 def convert_to_uint8(img: np.ndarray) -> np.ndarray:
     """Converts an image to uint8 if it is a float image.
@@ -37,6 +36,8 @@ def resize_with_pad(images: np.ndarray, height: int, width: int, method=Image.BI
 
 
 def resize_with_pad_jax(image, target_h, target_w):
+    import jax.numpy as jnp
+    import jax
     h, w = image.shape[:2]
     scale = jnp.minimum(target_h / h, target_w / w)
     new_h = jnp.round(h * scale).astype(int)
