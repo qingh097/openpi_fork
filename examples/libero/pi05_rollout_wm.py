@@ -43,7 +43,7 @@ class Args:
     
     resize_size: int = 224
     # replan_steps: int = 5
-    replan_steps: int = 5
+    replan_steps: int = 45
 
     #################################################################################################################
     # LIBERO environment-specific parameters
@@ -59,10 +59,10 @@ class Args:
     #################################################################################################################
     video_out_path: str = "data/libero/videos"  # Path to save videos
 
-    seed: int = 1023  # Random Seed (for reproducibility)
+    seed: int = 7  # Random Seed (for reproducibility)
     
     save_data: bool = False
-    random_selected_action: bool = True
+    random_selected_action: bool = False
 
 def random_initial_states(env, initial_states):
     #sample an array of 50,4 floats between 0 and 0.01
