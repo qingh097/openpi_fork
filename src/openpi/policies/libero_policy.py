@@ -99,6 +99,9 @@ class LiberoInputs(transforms.DataTransformFn):
         # stored in "prompt"; the output dict always needs to have the key "prompt").
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
+            
+        if "batch_size" in data:
+            inputs["batch_size"] = data["batch_size"]
 
         return inputs
 

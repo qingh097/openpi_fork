@@ -76,12 +76,8 @@ def random_initial_states(env, initial_states):
 
 def generate_batched_input(element, batch_size, noise_scale=1):
     new_element = element.copy()
+    new_element["batch_size"] = batch_size
     noise = np.random.randn(batch_size, 50, 32) * noise_scale
-    for k,v in new_element.items():
-        if isinstance(v, str):
-            continue
-        else:
-            new_element[k] = v[None].repeat(batch_size, axis=0)
     payload = {**new_element, "_noise": noise}
     return payload
 
@@ -284,7 +280,7 @@ def eval_libero(args: Args) -> None:
                             "prompt": str(task_description),
                         }
 
-                        payload = generate_batched_input(element, batch_size=20, noise_scale=1)
+                        payload = generate_batched_input(element, batch_size=10, noise_scale=1)
                         all_action_chunks = np.array(client.infer(payload)["actions"])
                         
                         if args.random_selected_action:

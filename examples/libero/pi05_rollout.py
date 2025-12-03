@@ -42,7 +42,7 @@ class Args:
     # LIBERO environment-specific parameters
     #################################################################################################################
     task_suite_name: str = (
-        "libero_object_unseen"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
+        "libero_spatial"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
     )
     num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize i n sim
     num_trials_per_task: int = 50  # Number of rollouts per task
@@ -54,7 +54,7 @@ class Args:
 
     seed: int = 591  # Random Seed (for reproducibility)
     
-    save_data: bool = True
+    save_data: bool = False
 
 def random_initial_states(env, initial_states):
     #sample an array of 50,4 floats between 0 and 0.01
@@ -65,6 +65,13 @@ def random_initial_states(env, initial_states):
     new_qpos = qpos + random_pos
     initial_states[:,1:1+qpos_shape[0]] = new_qpos
     return initial_states
+
+def generate_batched_input(element, batch_size, noise_scale=1):
+    new_element = element.copy()
+    new_element["batch_size"] = batch_size
+    noise = np.random.randn(batch_size, 50, 32) * noise_scale
+    payload = {**new_element, "_noise": noise}
+    return payload
 
 def eval_libero(args: Args) -> None:
     # Set random seed
@@ -97,7 +104,7 @@ def eval_libero(args: Args) -> None:
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     
     SAVE_INIT_STATES = False
-    LOAD_INIT_STATES = True
+    LOAD_INIT_STATES = False
     data_save_folder_path = f"/viscam/projects/dexs2r/libero_init/{args.task_suite_name}/seed_{args.seed}/"
     # Start evaluation
     total_episodes, total_successes = 0, 0
@@ -110,6 +117,7 @@ def eval_libero(args: Args) -> None:
         # Initialize LIBERO environment and task description
         env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
         initial_states = random_initial_states(env, initial_states)
+        
         if SAVE_INIT_STATES:
             save_folder_path = f"/viscam/projects/dexs2r/libero_init/{task_suite.tasks[task_id].problem_folder}/seed_{args.seed}/"
             os.makedirs(save_folder_path, exist_ok=True)
@@ -239,17 +247,24 @@ def eval_libero(args: Args) -> None:
                                 )
                             ),
                             "prompt": str(task_description),
+                            "batch_size": 10,
                         }
 
                         # Query model to get action
-                        action_chunk = client.infer(element)["actions"]
+                        # action_chunk = client.infer(element)["actions"]
+                        # action_chunk = action_chunk[0]
+                        
+                        payload = generate_batched_input(element, batch_size=10)
+                        all_action_chunks = np.array(client.infer(payload)["actions"])
+                        action_chunk = all_action_chunks[0]
+                        
                         assert (
                             len(action_chunk) >= args.replan_steps
                         ), f"We want to replan every {args.replan_steps} steps, but policy only predicts {len(action_chunk)} steps."
                         action_plan.extend(action_chunk[: args.replan_steps])
 
                     action = action_plan.popleft()
-
+                    # print(action[-1])
                     actions.append(action)
 
                     # Execute action in environment

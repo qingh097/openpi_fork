@@ -69,18 +69,10 @@ class Policy(BasePolicy):
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
+        inputs = self._input_transform(inputs)
         if not self._is_pytorch_model:
-            batched_transform = jax.vmap(self._input_transform)
-            inputs_no_prompt = {k: v for k, v in inputs.items() if k != "prompt"}
-            inputs_no_prompt = batched_transform(inputs_no_prompt)
-            prompt_transform = _transforms.TokenizePrompt( _tokenizer.PaligemmaTokenizer(self._model.max_token_len)    )
-            prompt_outputs = prompt_transform(inputs)
-            inputs = {**inputs_no_prompt}
-            batch_size = inputs_no_prompt['tokenized_prompt'].shape[0]
-            inputs['tokenized_prompt'] = prompt_outputs['tokenized_prompt'][None].repeat(batch_size, axis=0)
-            inputs['tokenized_prompt_mask'] = prompt_outputs['tokenized_prompt_mask'][None].repeat(batch_size, axis=0)
-            # Make a batch and convert to jax.Array.
-            # inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
+            batch_size = inputs['batch_size']
+            inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...].repeat(batch_size, 0), inputs)
             self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
         else:
             inputs = self._input_transform(inputs)
@@ -117,6 +109,48 @@ class Policy(BasePolicy):
         }
         return outputs
 
+    # @override
+    # def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
+    #     # Make a copy since transformations may modify the inputs in place.
+    #     inputs = jax.tree.map(lambda x: x, obs)
+    #     inputs = self._input_transform(inputs)
+    #     if not self._is_pytorch_model:
+    #         # Make a batch and convert to jax.Array.
+    #         inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
+    #         self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
+    #     else:
+    #         # Convert inputs to PyTorch tensors and move to correct device
+    #         inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs)
+    #         sample_rng_or_pytorch_device = self._pytorch_device
+
+    #     # Prepare kwargs for sample_actions
+    #     sample_kwargs = dict(self._sample_kwargs)
+    #     if noise is not None:
+    #         noise = torch.from_numpy(noise).to(self._pytorch_device) if self._is_pytorch_model else jnp.asarray(noise)
+
+    #         if noise.ndim == 2:  # If noise is (action_horizon, action_dim), add batch dimension
+    #             noise = noise[None, ...]  # Make it (1, action_horizon, action_dim)
+    #         sample_kwargs["noise"] = noise
+
+    #     observation = _model.Observation.from_dict(inputs)
+    #     start_time = time.monotonic()
+    #     outputs = {
+    #         "state": inputs["state"],
+    #         "actions": self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs),
+    #     }
+    #     model_time = time.monotonic() - start_time
+    #     if self._is_pytorch_model:
+    #         outputs = jax.tree.map(lambda x: np.asarray(x[0, ...].detach().cpu()), outputs)
+    #     else:
+    #         outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
+
+    #     outputs = self._output_transform(outputs)
+    #     outputs["policy_timing"] = {
+    #         "infer_ms": model_time * 1000,
+    #     }
+    #     return outputs
+    
+    
     @property
     def metadata(self) -> dict[str, Any]:
         return self._metadata
