@@ -56,8 +56,10 @@ class LiberoInputs(transforms.DataTransformFn):
         wrist_image = _parse_image(data["observation/wrist_image"])
 
         # Create inputs dict. Do not change the keys in the dict below.
-        state = data["observation/state"]
+        state = data["observation/state"].clone()
         state = transforms.pad_to_dim(state, self.action_dim)
+        
+            
         inputs = {
             "state": state,
             "image": {
@@ -78,10 +80,14 @@ class LiberoInputs(transforms.DataTransformFn):
         # Actions are only available during training.
         if "actions" in data:
             if not self.spatial_basis_action_chunk:
-                inputs["actions"] = data["actions"]
+                action = data["actions"].clone()
+                action = transforms.pad_to_dim(action, self.action_dim)
+                inputs["actions"] = action
             else:
                 inputs["timesteps"] = data["timesteps"]
-                inputs["actions"] = data["actions"].reshape(len(data["timesteps"]), -1)[:self.action_horizon, :]
+                action = data["actions"].reshape(len(data["timesteps"]), -1)[:self.action_horizon, :]
+                action = transforms.pad_to_dim(action, self.action_dim)
+                inputs["actions"] = action
         # Pass the prompt (aka language instruction) to the model.
         # Keep this for your own dataset (but modify the key if the instruction is not
         # stored in "prompt"; the output dict always needs to have the key "prompt").
@@ -101,6 +107,7 @@ class LiberoOutputs(transforms.DataTransformFn):
     """
     spatial_basis_action_chunk: bool = False
     action_horizon: int = 50 # Number of actions in the action chunk.
+    action_dim: int = 7
 
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
@@ -108,6 +115,6 @@ class LiberoOutputs(transforms.DataTransformFn):
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
         if not self.spatial_basis_action_chunk:
-            return {"actions": np.asarray(data["actions"][:, :7])}
+            return {"actions": np.asarray(data["actions"][:, :self.action_dim])}
         else:
-            return {"actions": data["actions"].reshape(len(data["timesteps"]), -1)[:self.action_horizon, :]}
+            return {"actions": data["actions"].reshape(len(data["timesteps"]), -1)[:self.action_horizon, :self.action_dim]}
