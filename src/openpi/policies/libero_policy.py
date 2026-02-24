@@ -35,25 +35,14 @@ class LiberoInputs(transforms.DataTransformFn):
     the correct elements of your dataset into the model.
     """
 
-    # The action dimension of the model. Will be used to pad state and actions for pi0 model (not pi0-FAST).
-    # Do not change this for your own dataset.
-    action_dim: int
-
     # Determines which model will be used.
     # Do not change this for your own dataset.
-    model_type: _model.ModelType = _model.ModelType.PI0
+    model_type: _model.ModelType
+    spatial_basis_action_chunk: bool = False
+    action_horizon: int = 50 # Number of actions in the action chunk.
+    action_dim: int = 32
 
     def __call__(self, data: dict) -> dict:
-        # We only mask padding for pi0 model, not pi0-FAST. Do not change this for your own dataset.
-        mask_padding = self.model_type == _model.ModelType.PI0
-
-        # We pad the proprioceptive input to the action dimension of the model.
-        # For pi0-FAST, we don't pad the state. For Libero, we don't need to differentiate
-        # since the pi0-FAST action_dim = 7, which is < state_dim = 8, so pad is skipped.
-        # Keep this for your own dataset, but if your dataset stores the proprioceptive input
-        # in a different key than "observation/state", you should change it below.
-        state = transforms.pad_to_dim(data["observation/state"], self.action_dim)
-
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference.
         # Keep this for your own dataset, but if your dataset stores the images
@@ -63,10 +52,12 @@ class LiberoInputs(transforms.DataTransformFn):
         # and two wrist views (left and right). If your dataset does not have a particular type
         # of image, e.g. wrist images, you can comment it out here and replace it with zeros like we do for the
         # right wrist image below.
-        base_image = _parse_image(data["observation/image"])
+        base_image = _parse_image(data["observation/image"])[::-1,::-1,:]
         wrist_image = _parse_image(data["observation/wrist_image"])
 
         # Create inputs dict. Do not change the keys in the dict below.
+        state = data["observation/state"]
+        state = transforms.pad_to_dim(state, self.action_dim)
         inputs = {
             "state": state,
             "image": {
@@ -78,19 +69,19 @@ class LiberoInputs(transforms.DataTransformFn):
             "image_mask": {
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,
-                # Mask any non-existent images with False (if ``mask_padding`` is True).
-                "right_wrist_0_rgb": np.False_ if mask_padding else np.True_,
+                # We only mask padding images for pi0 model, not pi0-FAST. Do not change this for your own dataset.
+                "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
             },
         }
 
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.
         if "actions" in data:
-            # We are padding to the model action dim.
-            # For pi0-FAST, this is a no-op (since action_dim = 7).
-            actions = transforms.pad_to_dim(data["actions"], self.action_dim)
-            inputs["actions"] = actions
-
+            if not self.spatial_basis_action_chunk:
+                inputs["actions"] = data["actions"]
+            else:
+                inputs["timesteps"] = data["timesteps"]
+                inputs["actions"] = data["actions"].reshape(len(data["timesteps"]), -1)[:self.action_horizon, :]
         # Pass the prompt (aka language instruction) to the model.
         # Keep this for your own dataset (but modify the key if the instruction is not
         # stored in "prompt"; the output dict always needs to have the key "prompt").
@@ -108,10 +99,15 @@ class LiberoOutputs(transforms.DataTransformFn):
 
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
+    spatial_basis_action_chunk: bool = False
+    action_horizon: int = 50 # Number of actions in the action chunk.
 
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        if not self.spatial_basis_action_chunk:
+            return {"actions": np.asarray(data["actions"][:, :7])}
+        else:
+            return {"actions": data["actions"].reshape(len(data["timesteps"]), -1)[:self.action_horizon, :]}

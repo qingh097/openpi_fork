@@ -95,6 +95,8 @@ class DataConfig:
 
     # episodes index to use for training 
     episodes_index : List[int] | None = None
+    
+    spatial_basis_action_chunk: bool = False
 
 class GroupFactory(Protocol):
     def __call__(self, model_config: _model.BaseModelConfig) -> _transforms.Group:
@@ -253,7 +255,6 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
             action_sequence_keys=self.action_sequence_keys,
         )
 
-
 @dataclasses.dataclass(frozen=True)
 class LeRobotLiberoDataConfig(DataConfigFactory):
     """
@@ -261,7 +262,9 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
     For your own dataset, you can copy this class and modify the transforms to match your dataset based on the
     comments below.
     """
-
+    extra_delta_transform: bool = False
+    spatial_basis_action_chunk: bool = False
+    
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         # The repack transform is *only* applied to the data coming from the dataset,
@@ -272,19 +275,35 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # For your own dataset, first figure out what keys your environment passes to the policy server
         # and then modify the mappings below so your dataset's keys get matched to those target keys.
         # The repack transform simply remaps key names here.
-        repack_transform = _transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "observation/image": "image",
-                        "observation/wrist_image": "wrist_image",
-                        "observation/state": "state",
-                        "actions": "actions",
-                        "prompt": "prompt",
-                    }
-                )
-            ]
-        )
+        if self.spatial_basis_action_chunk:
+            repack_transform = _transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "observation/image": "image",
+                            "observation/wrist_image": "wrist_image",
+                            "observation/state": "state",
+                            "actions": "spatial_actions",
+                            "timesteps": "spatial_timesteps",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            )
+        else:   
+            repack_transform = _transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "observation/image": "image",
+                            "observation/wrist_image": "wrist_image",
+                            "observation/state": "state",
+                            "actions": "actions",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            )
 
         # The data transforms are applied to the data coming from the dataset *and* during inference.
         # Below, we define the transforms for data going into the model (``inputs``) and the transforms
@@ -293,8 +312,8 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # how to modify the transforms to match your dataset. Once you created your own transforms, you can
         # replace the transforms below with your own.
         data_transforms = _transforms.Group(
-            inputs=[libero_policy.LiberoInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
-            outputs=[libero_policy.LiberoOutputs()],
+            inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type, spatial_basis_action_chunk=self.spatial_basis_action_chunk, action_horizon=model_config.action_horizon, action_dim=model_config.action_dim)],
+            outputs=[libero_policy.LiberoOutputs(spatial_basis_action_chunk=self.spatial_basis_action_chunk, action_horizon=model_config.action_horizon)],
         )
 
         # One additional data transform: pi0 models are trained on delta actions (relative to the first
@@ -309,11 +328,12 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 
         # TODO(karl): comment this out once we have updated the Libero checkpoints to not use
         # the delta action transform
-        delta_action_mask = _transforms.make_bool_mask(6, -1)
-        data_transforms = data_transforms.push(
-            inputs=[_transforms.DeltaActions(delta_action_mask)],
-            outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-        )
+        if self.extra_delta_transform:
+            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
 
         # Model transforms include things like tokenizing the prompt and action targets
         # You do not need to change anything here for your own dataset.
@@ -325,8 +345,10 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+            spatial_basis_action_chunk=self.spatial_basis_action_chunk,
         )
-    
+
+
 @dataclasses.dataclass(frozen=True)
 class LeRobotOtterDataConfig(DataConfigFactory):
     @override
@@ -1333,6 +1355,115 @@ _CONFIGS = [
         ).get_freeze_filter(),
         # Turn off EMA for LoRA finetuning.
         ema_decay=None,
+    ),
+
+
+    ## Added by JYu, 2026-02-12 for spatial basis finetuning
+    TrainConfig(
+        name="pi0_libero_spatial_basis_low_mem_finetune",
+        # Here is an example of loading a pi0 model for LoRA fine-tuning.
+        model=pi0.Pi0Config(paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
+        data=LeRobotLiberoDataConfig(
+            repo_id="libero_aug_spatial_basis",
+            base_config=DataConfig(prompt_from_task=True, local_files_only=True),
+            extra_delta_transform=False,
+            spatial_basis_action_chunk=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        # Turn off EMA for LoRA finetuning.
+        ema_decay=None,
+    ),
+    
+    TrainConfig(
+        name="pi0_libero_spatial_basis_lora_16",
+        # Here is an example of loading a pi0 model for LoRA fine-tuning.
+        model=pi0.Pi0Config(paligemma_variant="gemma_2b_lora"),
+        data=LeRobotLiberoDataConfig(
+            repo_id="libero_aug_spatial_basis",
+            base_config=DataConfig(prompt_from_task=True, local_files_only=True),
+            extra_delta_transform=False,
+            spatial_basis_action_chunk=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        # Turn off EMA for LoRA finetuning.
+        ema_decay=None,
+        val_repo_id="libero_aug_spatial_basis",
+        val_episodes_index=list(range(100,209)),
+    ),
+    
+    TrainConfig(
+        name="pi0_libero_spatial_basis_e2e",
+        # Here is an example of loading a pi0 model for LoRA fine-tuning.
+        model=pi0.Pi0Config(),
+        data=LeRobotLiberoDataConfig(
+            repo_id="libero_aug_spatial_basis",
+            base_config=DataConfig(prompt_from_task=True, local_files_only=True),
+            extra_delta_transform=False,
+            spatial_basis_action_chunk=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+    ),
+    
+    TrainConfig(
+        name="pi0_libero_perturb_low_mem_finetune",
+        # Here is an example of loading a pi0 model for LoRA fine-tuning.
+        model=pi0.Pi0Config(paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
+        data=LeRobotLiberoDataConfig(
+            repo_id="libero_aug_spatial_basis",
+            base_config=DataConfig(prompt_from_task=True, local_files_only=True),
+            extra_delta_transform=False,
+            spatial_basis_action_chunk=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        # Turn off EMA for LoRA finetuning.
+        ema_decay=None,
+    ),
+    
+    TrainConfig(
+        name="pi0_libero_perturb_lora_16",
+        # Here is an example of loading a pi0 model for LoRA fine-tuning.
+        model=pi0.Pi0Config(paligemma_variant="gemma_2b_lora"),
+        data=LeRobotLiberoDataConfig(
+            repo_id="libero_aug_spatial_basis",
+            base_config=DataConfig(prompt_from_task=True, local_files_only=True),
+            extra_delta_transform=False,
+            spatial_basis_action_chunk=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0.Pi0Config(
+            paligemma_variant="gemma_2b_lora"
+        ).get_freeze_filter(),
+        # Turn off EMA for LoRA finetuning.
+        ema_decay=None,
+        val_repo_id="libero_aug_spatial_basis",
+        val_episodes_index=list(range(100,209)),
+    ),
+    TrainConfig(
+        name="pi0_libero_perturb_e2e",
+        # Here is an example of loading a pi0 model for LoRA fine-tuning.
+        model=pi0.Pi0Config(),
+        data=LeRobotLiberoDataConfig(
+            repo_id="libero_aug_spatial_basis",
+            base_config=DataConfig(prompt_from_task=True, local_files_only=True),
+            extra_delta_transform=False,
+            spatial_basis_action_chunk=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
     ),
     #
     # Fine-tuning Aloha configs.
