@@ -1,2 +1,10 @@
 run_id	commit	strategy	description	success_rate	successes	episodes	status	notes
 1	baseline	default_wm	10 candidates, noise_scale=2, replan_steps=45	0.20	1	5	done	baseline
+2	3c443b9	default_wm	20 candidates, noise_scale=2	0.40	2	5	done	2x baseline
+3	3c443b9	cem	CEM 3 iters, pop=20, elite=0.2	0.40	2	5	done	same as 20 cand simple
+4	3c443b9	default_wm	30 candidates, noise_scale=2	0.20	1	5	done	no improvement
+5	3c443b9	default_wm	20 candidates, noise_scale=1.0	0.20	1	5	done	low noise hurts
+6	3c443b9	default_wm	20 candidates, noise_scale=3.0	0.00	0	5	done	too much noise
+7	3c443b9	default_wm	20 cand, noise=2, smooth_kernel=5	0.20	1	5	done	smooth noise no help
+8	3c443b9	default_wm	20 cand, noise=1.5	0.40	2	5	done	ties with noise=2
+9	3c443b9	default_wm	20 cand, replan=15, pred=15	0.60	3	5	done	NEW BEST

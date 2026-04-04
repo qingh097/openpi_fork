@@ -72,6 +72,8 @@ class Args:
     #################################################################################################################
     num_candidates: int = 10  # Number of action candidates for WM selection
     noise_scale: float = 2.0  # Noise scale for VLA sampling
+    smooth_noise: bool = False  # Temporally smooth diffusion noise
+    smooth_kernel: int = 5  # Kernel size for temporal smoothing
 
     #################################################################################################################
     # CEM parameters
@@ -92,10 +94,18 @@ def random_initial_states(env, initial_states):
     initial_states[:,1:1+qpos_shape[0]] = new_qpos
     return initial_states
 
-def generate_batched_input(element, batch_size, noise_scale=1):
+def generate_batched_input(element, batch_size, noise_scale=1, smooth_noise=False, smooth_kernel=5):
     new_element = element.copy()
     new_element["batch_size"] = batch_size
     noise = np.random.randn(batch_size, 50, 32) * noise_scale
+    if smooth_noise and smooth_kernel > 1:
+        # Apply causal moving average along temporal axis for smoother action sequences
+        kernel = np.ones(smooth_kernel) / smooth_kernel
+        for i in range(batch_size):
+            for j in range(32):
+                noise[i, :, j] = np.convolve(noise[i, :, j], kernel, mode='same')
+        # Re-scale to maintain original noise magnitude
+        noise = noise * noise_scale / (noise.std() + 1e-8)
     payload = {**new_element, "_noise": noise}
     return payload
 
@@ -368,7 +378,7 @@ def eval_libero(args: Args) -> None:
                         goal_image = np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1])
 
                         if args.random_selected_action:
-                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale)
+                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel)
                             all_action_chunks = np.array(client.infer(payload)["actions"])
                             action_chunk = all_action_chunks[np.random.randint(0, len(all_action_chunks))]
                         elif args.use_cem:
@@ -376,7 +386,7 @@ def eval_libero(args: Args) -> None:
                             action_chunk, selected_idx, best_mse, wm_preds = cem_action_selection(
                                 client, action_selector, element,
                                 goal_image, img, wrist_img,
-                                prediction_steps=45, args=args,
+                                prediction_steps=args.replan_steps, args=args,
                             )
                             print(f"CEM best mse: {best_mse:.6f}")
                             plan_idx += args.replan_steps
@@ -395,14 +405,14 @@ def eval_libero(args: Args) -> None:
                                 imageio.imwrite(str(wm_save_dir / f"step{t}_goal.png"), goal_used[::-1, ::-1])
                                 imageio.imwrite(str(wm_save_dir / f"step{t}_agent_obs.png"), img)
                         else:
-                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale)
+                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel)
                             all_action_chunks = np.array(client.infer(payload)["actions"])
                             wm_obs = {
                                 "action_chunks": all_action_chunks,
                                 "agent_obs": img,
                                 "wrist_obs": wrist_img,
                                 "goal_image": goal_image,
-                                'prediction_steps': 45,
+                                'prediction_steps': args.replan_steps,
                             }
                             print("selecting actions chunks......")
                             results = action_selector.infer(wm_obs)
