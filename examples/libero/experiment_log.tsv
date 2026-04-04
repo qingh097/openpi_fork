@@ -1,0 +1,2 @@
+run_id	commit	strategy	description	success_rate	successes	episodes	status	notes
+1	baseline	default_wm	10 candidates, noise_scale=2, replan_steps=45	0.20	1	5	done	baseline

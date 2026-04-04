@@ -62,7 +62,25 @@ class Args:
     seed: int = 7  # Random Seed (for reproducibility)
     
     save_data: bool = False
+    save_videos: bool = False  # Save replay/WM videos to disk
     random_selected_action: bool = False
+    max_tasks: int = 1  # Max number of tasks to evaluate (0 = all)
+    max_episodes: int = 5  # Max episodes per task (0 = all)
+
+    #################################################################################################################
+    # Action selection parameters
+    #################################################################################################################
+    num_candidates: int = 10  # Number of action candidates for WM selection
+    noise_scale: float = 2.0  # Noise scale for VLA sampling
+
+    #################################################################################################################
+    # CEM parameters
+    #################################################################################################################
+    use_cem: bool = False  # Enable Cross-Entropy Method for action selection
+    cem_iters: int = 3  # Number of CEM iterations
+    cem_population: int = 20  # Number of candidates per CEM iteration
+    cem_elite_fraction: float = 0.2  # Fraction of elites to keep
+    cem_noise_scale_init: float = 2.0  # Initial noise scale
 
 def random_initial_states(env, initial_states):
     #sample an array of 50,4 floats between 0 and 0.01
@@ -80,6 +98,57 @@ def generate_batched_input(element, batch_size, noise_scale=1):
     noise = np.random.randn(batch_size, 50, 32) * noise_scale
     payload = {**new_element, "_noise": noise}
     return payload
+
+def cem_action_selection(client, action_selector, element, goal_image, agent_obs, wrist_obs, prediction_steps, args):
+    """Cross-Entropy Method seeded by VLA policy samples, then refined in action space."""
+    num_elites = max(1, int(args.cem_population * args.cem_elite_fraction))
+
+    best_action = None
+    best_score = float('inf')
+    best_predictions = None
+    best_idx = 0
+
+    # Iteration 0: seed with VLA policy samples
+    payload = generate_batched_input(element, batch_size=args.cem_population, noise_scale=args.cem_noise_scale_init)
+    all_action_chunks = np.array(client.infer(payload)["actions"])  # (N, T, action_dim)
+
+    for cem_iter in range(args.cem_iters):
+        # Evaluate candidates with world model
+        wm_obs = {
+            "action_chunks": all_action_chunks,
+            "agent_obs": agent_obs,
+            "wrist_obs": wrist_obs,
+            "goal_image": goal_image,
+            "prediction_steps": prediction_steps,
+        }
+        results = action_selector.infer(wm_obs)
+        mse_distances = np.array(results['mse_distance'])
+
+        # Select elites
+        elite_indices = np.argsort(mse_distances)[:num_elites]
+        elite_actions = all_action_chunks[elite_indices]  # (K, T, action_dim)
+
+        # Track global best across all iterations
+        iter_best = elite_indices[0]
+        if mse_distances[iter_best] < best_score:
+            best_score = mse_distances[iter_best]
+            best_action = all_action_chunks[iter_best]
+            best_idx = iter_best
+            best_predictions = np.array(results['all_predictions'])
+
+        print(f"  CEM iter {cem_iter}: best_mse={mse_distances[iter_best]:.6f}, "
+              f"mean_mse={mse_distances.mean():.6f}, std_mse={mse_distances.std():.6f}")
+
+        # If not the last iteration, resample around elites in action space
+        if cem_iter < args.cem_iters - 1:
+            action_mean = elite_actions.mean(axis=0)  # (T, action_dim)
+            action_std = elite_actions.std(axis=0) + 1e-5  # (T, action_dim)
+            all_action_chunks = action_mean + action_std * np.random.randn(
+                args.cem_population, *action_mean.shape
+            )
+
+    return best_action, best_idx, best_score, best_predictions
+
 
 def eval_libero(args: Args) -> None:
     # Set random seed
@@ -117,7 +186,8 @@ def eval_libero(args: Args) -> None:
     data_save_folder_path = f"/viscam/projects/dexs2r/libero_init/{args.task_suite_name}/seed_{args.seed}/"
     # Start evaluation
     total_episodes, total_successes = 0, 0
-    for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
+    num_tasks_to_eval = min(num_tasks_in_suite, args.max_tasks) if args.max_tasks > 0 else num_tasks_in_suite
+    for task_id in tqdm.tqdm(range(num_tasks_to_eval)):
         # Get task
         task = task_suite.get_task(task_id)
         # Get default LIBERO initial states
@@ -168,7 +238,8 @@ def eval_libero(args: Args) -> None:
             
             initial_states = torch.load(init_states_path)
             predefined_index = np.arange(len(initial_states))
-            # predefined_index = [23]
+            if args.max_episodes > 0:
+                predefined_index = predefined_index[:args.max_episodes]
             print(f"predefined episodes: {predefined_index}")
 
         else:
@@ -294,17 +365,43 @@ def eval_libero(args: Args) -> None:
                             "prompt": str(task_description),
                         }
 
-                        payload = generate_batched_input(element, batch_size=10, noise_scale=2)
-                        all_action_chunks = np.array(client.infer(payload)["actions"])
-                        
+                        goal_image = np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1])
+
                         if args.random_selected_action:
+                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale)
+                            all_action_chunks = np.array(client.infer(payload)["actions"])
                             action_chunk = all_action_chunks[np.random.randint(0, len(all_action_chunks))]
+                        elif args.use_cem:
+                            print("selecting action chunks with CEM......")
+                            action_chunk, selected_idx, best_mse, wm_preds = cem_action_selection(
+                                client, action_selector, element,
+                                goal_image, img, wrist_img,
+                                prediction_steps=45, args=args,
+                            )
+                            print(f"CEM best mse: {best_mse:.6f}")
+                            plan_idx += args.replan_steps
+                            plan_idx = min(plan_idx, len(goal_images) - 1)
+
+                            # Save WM rollout predictions (from the best CEM iteration)
+                            if args.save_videos and wm_preds is not None:
+                                wm_save_dir = pathlib.Path(args.video_out_path) / "wm_rollouts" / f"{task_description.replace(' ', '_')}_ep{episode_idx}"
+                                wm_save_dir.mkdir(parents=True, exist_ok=True)
+                                for ci in range(wm_preds.shape[0]):
+                                    frames = (np.clip(wm_preds[ci].transpose(0, 2, 3, 1), 0, 1) * 255).astype(np.uint8)
+                                    tag = "SELECTED" if ci == selected_idx else "candidate"
+                                    vid_name = f"step{t}_{tag}_chunk{ci}.mp4"
+                                    imageio.mimwrite(str(wm_save_dir / vid_name), [f for f in frames], fps=5, macro_block_size=1)
+                                goal_used = np.asarray(goal_images[plan_idx - args.replan_steps])
+                                imageio.imwrite(str(wm_save_dir / f"step{t}_goal.png"), goal_used[::-1, ::-1])
+                                imageio.imwrite(str(wm_save_dir / f"step{t}_agent_obs.png"), img)
                         else:
+                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale)
+                            all_action_chunks = np.array(client.infer(payload)["actions"])
                             wm_obs = {
                                 "action_chunks": all_action_chunks,
                                 "agent_obs": img,
                                 "wrist_obs": wrist_img,
-                                "goal_image": np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1]),
+                                "goal_image": goal_image,
                                 'prediction_steps': 45,
                             }
                             print("selecting actions chunks......")
@@ -316,21 +413,18 @@ def eval_libero(args: Args) -> None:
                             print("selected action chunk index: ", selected_idx)
 
                             # Save WM rollout predictions
-                            wm_preds = np.array(results['all_predictions'])  # (N, T, C, H, W)
-                            wm_save_dir = pathlib.Path(args.video_out_path) / "wm_rollouts" / f"{task_description.replace(' ', '_')}_ep{episode_idx}"
-                            wm_save_dir.mkdir(parents=True, exist_ok=True)
-                            for ci in range(wm_preds.shape[0]):
-                                # Transpose from (T, C, H, W) to (T, H, W, C) and convert to uint8
-                                frames = (np.clip(wm_preds[ci].transpose(0, 2, 3, 1), 0, 1) * 255).astype(np.uint8)
-                                tag = "SELECTED" if ci == selected_idx else "candidate"
-                                vid_name = f"step{t}_{tag}_chunk{ci}.mp4"
-                                imageio.mimwrite(str(wm_save_dir / vid_name), [f for f in frames], fps=5, macro_block_size=1)
-                            # Save the exact goal image that was used for action selection
-                            goal_used = np.asarray(goal_images[plan_idx - args.replan_steps])
-                            goal_path = wm_save_dir / f"step{t}_goal.png"
-                            imageio.imwrite(str(goal_path), goal_used[::-1, ::-1])
-                            # Save the current agent observation for comparison
-                            imageio.imwrite(str(wm_save_dir / f"step{t}_agent_obs.png"), img)
+                            if args.save_videos:
+                                wm_preds = np.array(results['all_predictions'])  # (N, T, C, H, W)
+                                wm_save_dir = pathlib.Path(args.video_out_path) / "wm_rollouts" / f"{task_description.replace(' ', '_')}_ep{episode_idx}"
+                                wm_save_dir.mkdir(parents=True, exist_ok=True)
+                                for ci in range(wm_preds.shape[0]):
+                                    frames = (np.clip(wm_preds[ci].transpose(0, 2, 3, 1), 0, 1) * 255).astype(np.uint8)
+                                    tag = "SELECTED" if ci == selected_idx else "candidate"
+                                    vid_name = f"step{t}_{tag}_chunk{ci}.mp4"
+                                    imageio.mimwrite(str(wm_save_dir / vid_name), [f for f in frames], fps=5, macro_block_size=1)
+                                goal_used = np.asarray(goal_images[plan_idx - args.replan_steps])
+                                imageio.imwrite(str(wm_save_dir / f"step{t}_goal.png"), goal_used[::-1, ::-1])
+                                imageio.imwrite(str(wm_save_dir / f"step{t}_agent_obs.png"), img)
                         
                         
                         # Query model to get action
@@ -396,13 +490,14 @@ def eval_libero(args: Args) -> None:
             total_episodes += 1
             
             # Save a replay video of the episode
-            suffix = "success" if done else "failure"
-            task_segment = task_description.replace(" ", "_")
-            imageio.mimwrite(
-                pathlib.Path(args.video_out_path) / f"rollout_{task_segment}_{suffix}_{episode_idx}.mp4",
-                [np.asarray(x) for x in replay_images],
-                fps=10,
-            )
+            if args.save_videos:
+                suffix = "success" if done else "failure"
+                task_segment = task_description.replace(" ", "_")
+                imageio.mimwrite(
+                    pathlib.Path(args.video_out_path) / f"rollout_{task_segment}_{suffix}_{episode_idx}.mp4",
+                    [np.asarray(x) for x in replay_images],
+                    fps=10,
+                )
 
             if SAVE_INIT_STATES:
                 success_mask.append(bool(done))
