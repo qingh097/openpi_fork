@@ -36,7 +36,7 @@ class Args:
     #################################################################################################################
     # Model server parameters
     #################################################################################################################
-    host: str = "10.79.12.59"
+    host: str = "10.79.12.37"
     port: int = 8000
     wm_host: str = "0.0.0.0"
     wm_port: int = 9100
@@ -57,7 +57,7 @@ class Args:
     #################################################################################################################
     # Utils
     #################################################################################################################
-    video_out_path: str = "data/libero/videos"  # Path to save videos
+    video_out_path: str = "data/libero/test"  # Path to save videos
 
     seed: int = 7  # Random Seed (for reproducibility)
     
@@ -138,8 +138,19 @@ def eval_libero(args: Args) -> None:
             
         if LOAD_INIT_STATES:
             task_name = task_description.replace(" ","_")
-            init_states_folder = f'/viscam/projects/dexs2r/libero_init/{task_suite.tasks[task_id].problem_folder}/'
+            
+            # if task_name in ['pick_up_the_red_coffee_mug_and_place_it_in_the_basket', 'pick_up_the_book_and_place_it_in_the_basket','pick_up_the_white_yellow_mug_and_place_it_in_the_basket']:
+            #     continue
+            
+            # init_states_folder = f'/viscam/projects/dexs2r/libero_init/{task_suite.tasks[task_id].problem_folder}/'
+            init_states_folder = f'/viscam/projects/lacwm/libero_init/{task_suite.tasks[task_id].problem_folder}/'
+            
             init_states_path = os.path.join(init_states_folder, f'{task_name}_all.pruned_init')
+            
+            if not os.path.exists(init_states_path):
+                print(f"init_states_path does not exist: {init_states_path}")
+                continue
+            
             expert_demo_info_csv_path = os.path.join(init_states_folder, f'init_state_path.csv')
             
             csv_reader = csv.reader(open(expert_demo_info_csv_path, 'r'))
@@ -190,8 +201,11 @@ def eval_libero(args: Args) -> None:
             
             expert_demo_data_path = os.path.join(init_states_folder, f'seed_{all_seeds[episode_idx]}', f'{task_name}.hdf5')
             expert_demo_data = h5py.File(expert_demo_data_path, 'r')['data']
-            all_demo_keys = list(expert_demo_data.keys())
-            cur_demo_key = all_demo_keys[episode_idx]
+            demo_index = all_indexes[episode_idx]
+            try:
+                cur_demo_key = f'demo_{demo_index}'
+            except:
+                import pdb; pdb.set_trace()
             cur_demo_data = expert_demo_data[cur_demo_key]
             goal_images = cur_demo_data['obs/agentview_rgb']
             
@@ -280,7 +294,7 @@ def eval_libero(args: Args) -> None:
                             "prompt": str(task_description),
                         }
 
-                        payload = generate_batched_input(element, batch_size=10, noise_scale=1)
+                        payload = generate_batched_input(element, batch_size=10, noise_scale=2)
                         all_action_chunks = np.array(client.infer(payload)["actions"])
                         
                         if args.random_selected_action:
@@ -290,15 +304,33 @@ def eval_libero(args: Args) -> None:
                                 "action_chunks": all_action_chunks,
                                 "agent_obs": img,
                                 "wrist_obs": wrist_img,
-                                "goal_image": goal_images[plan_idx],
-                                'prediction_steps': 20,
+                                "goal_image": np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1]),
+                                'prediction_steps': 45,
                             }
                             print("selecting actions chunks......")
                             results = action_selector.infer(wm_obs)
                             plan_idx += args.replan_steps
                             plan_idx = min(plan_idx, len(goal_images)-1)
                             action_chunk = results['action']
-                            print("selected action chunk index: ", results['index'])
+                            selected_idx = results['index']
+                            print("selected action chunk index: ", selected_idx)
+
+                            # Save WM rollout predictions
+                            wm_preds = np.array(results['all_predictions'])  # (N, T, C, H, W)
+                            wm_save_dir = pathlib.Path(args.video_out_path) / "wm_rollouts" / f"{task_description.replace(' ', '_')}_ep{episode_idx}"
+                            wm_save_dir.mkdir(parents=True, exist_ok=True)
+                            for ci in range(wm_preds.shape[0]):
+                                # Transpose from (T, C, H, W) to (T, H, W, C) and convert to uint8
+                                frames = (np.clip(wm_preds[ci].transpose(0, 2, 3, 1), 0, 1) * 255).astype(np.uint8)
+                                tag = "SELECTED" if ci == selected_idx else "candidate"
+                                vid_name = f"step{t}_{tag}_chunk{ci}.mp4"
+                                imageio.mimwrite(str(wm_save_dir / vid_name), [f for f in frames], fps=5, macro_block_size=1)
+                            # Save the exact goal image that was used for action selection
+                            goal_used = np.asarray(goal_images[plan_idx - args.replan_steps])
+                            goal_path = wm_save_dir / f"step{t}_goal.png"
+                            imageio.imwrite(str(goal_path), goal_used[::-1, ::-1])
+                            # Save the current agent observation for comparison
+                            imageio.imwrite(str(wm_save_dir / f"step{t}_agent_obs.png"), img)
                         
                         
                         # Query model to get action
