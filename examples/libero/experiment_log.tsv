@@ -7,4 +7,18 @@ run_id	commit	strategy	description	success_rate	successes	episodes	status	notes
 6	3c443b9	default_wm	20 candidates, noise_scale=3.0	0.00	0	5	done	too much noise
 7	3c443b9	default_wm	20 cand, noise=2, smooth_kernel=5	0.20	1	5	done	smooth noise no help
 8	3c443b9	default_wm	20 cand, noise=1.5	0.40	2	5	done	ties with noise=2
-9	3c443b9	default_wm	20 cand, replan=15, pred=15	0.60	3	5	done	NEW BEST
+9	3c443b9	default_wm	20 cand, replan=15, pred=15	0.60	3	5	done
+10	b62e922	default_wm	20 cand, replan=25, pred=25	0.80	4	5	done	NEW BEST - need confirmation
+11	b62e922	default_wm	20 cand, replan=10, pred=10	0.60	3	5	done	too frequent replanning
+10b	b62e922	default_wm	20 cand, replan=25, pred=25 (confirm)	0.80	12	15	done	confirmed 80%
+9b	b62e922	default_wm	20 cand, replan=15, pred=15 (confirm)	0.67	10	15	done	confirmed 67%
+12	b62e922	default_wm	20 cand, replan=20, pred=20	1.00	5	5	done	5-ep fluke
+12b	b62e922	default_wm	20 cand, replan=20, pred=20 (confirm)	0.55	11	20	done	confirmed 55%
+10c	b62e922	default_wm	20 cand, replan=25, pred=25 (confirm2)	0.70	14	20	done	confirmed ~70-80%
+13	b62e922	default_wm	20 cand, replan=30, pred=30	0.60	9	15	done
+14	b62e922	cem	CEM 3iter pop=20 + replan=25	0.73	11	15	done	CEM ~= simple selection
+15	b62e922	default_wm	30 cand, replan=25, pred=25	0.60	9	15	done	more cand hurts
+16	b62e922	default_wm	15 cand, replan=25, pred=25	0.73	11	15	done	similar to 20 cand
+17	b62e922	default_wm	20 cand, replan=25, multi-scale noise	0.73	11	15	done	no improvement
+18	b62e922	default_wm	20 cand, replan=25, noise=1.5	0.53	8	15	done	noise=2 better
+19	b62e922	softmax_blend	20 cand, replan=25, blend top5	0.00	0	15	done	blending kills actions

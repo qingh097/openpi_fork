@@ -74,6 +74,10 @@ class Args:
     noise_scale: float = 2.0  # Noise scale for VLA sampling
     smooth_noise: bool = False  # Temporally smooth diffusion noise
     smooth_kernel: int = 5  # Kernel size for temporal smoothing
+    multi_scale_noise: bool = False  # Use mixed noise scales (low + high)
+    softmax_blend: bool = False  # Blend top-k actions weighted by softmax(-mse/temp)
+    blend_temperature: float = 0.01  # Temperature for softmax blending
+    blend_top_k: int = 5  # Number of top candidates to blend
 
     #################################################################################################################
     # CEM parameters
@@ -94,10 +98,17 @@ def random_initial_states(env, initial_states):
     initial_states[:,1:1+qpos_shape[0]] = new_qpos
     return initial_states
 
-def generate_batched_input(element, batch_size, noise_scale=1, smooth_noise=False, smooth_kernel=5):
+def generate_batched_input(element, batch_size, noise_scale=1, smooth_noise=False, smooth_kernel=5, multi_scale=False):
     new_element = element.copy()
     new_element["batch_size"] = batch_size
-    noise = np.random.randn(batch_size, 50, 32) * noise_scale
+    if multi_scale:
+        # Half candidates at low noise, half at high noise
+        half = batch_size // 2
+        noise_low = np.random.randn(half, 50, 32) * (noise_scale * 0.5)
+        noise_high = np.random.randn(batch_size - half, 50, 32) * noise_scale
+        noise = np.concatenate([noise_low, noise_high], axis=0)
+    else:
+        noise = np.random.randn(batch_size, 50, 32) * noise_scale
     if smooth_noise and smooth_kernel > 1:
         # Apply causal moving average along temporal axis for smoother action sequences
         kernel = np.ones(smooth_kernel) / smooth_kernel
@@ -378,7 +389,7 @@ def eval_libero(args: Args) -> None:
                         goal_image = np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1])
 
                         if args.random_selected_action:
-                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel)
+                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel, multi_scale=args.multi_scale_noise)
                             all_action_chunks = np.array(client.infer(payload)["actions"])
                             action_chunk = all_action_chunks[np.random.randint(0, len(all_action_chunks))]
                         elif args.use_cem:
@@ -405,7 +416,7 @@ def eval_libero(args: Args) -> None:
                                 imageio.imwrite(str(wm_save_dir / f"step{t}_goal.png"), goal_used[::-1, ::-1])
                                 imageio.imwrite(str(wm_save_dir / f"step{t}_agent_obs.png"), img)
                         else:
-                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel)
+                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel, multi_scale=args.multi_scale_noise)
                             all_action_chunks = np.array(client.infer(payload)["actions"])
                             wm_obs = {
                                 "action_chunks": all_action_chunks,
@@ -418,8 +429,18 @@ def eval_libero(args: Args) -> None:
                             results = action_selector.infer(wm_obs)
                             plan_idx += args.replan_steps
                             plan_idx = min(plan_idx, len(goal_images)-1)
-                            action_chunk = results['action']
-                            selected_idx = results['index']
+                            if args.softmax_blend:
+                                mse_distances = np.array(results['mse_distance'])
+                                top_k_idx = np.argsort(mse_distances)[:args.blend_top_k]
+                                top_k_mse = mse_distances[top_k_idx]
+                                weights = np.exp(-top_k_mse / args.blend_temperature)
+                                weights = weights / weights.sum()
+                                action_chunk = np.sum(all_action_chunks[top_k_idx] * weights[:, None, None], axis=0)
+                                selected_idx = top_k_idx[0]
+                                print(f"softmax blend weights: {weights}, indices: {top_k_idx}")
+                            else:
+                                action_chunk = results['action']
+                                selected_idx = results['index']
                             print("selected action chunk index: ", selected_idx)
 
                             # Save WM rollout predictions
