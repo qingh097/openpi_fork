@@ -78,6 +78,8 @@ class Args:
     softmax_blend: bool = False  # Blend top-k actions weighted by softmax(-mse/temp)
     blend_temperature: float = 0.01  # Temperature for softmax blending
     blend_top_k: int = 5  # Number of top candidates to blend
+    use_final_goal: bool = False  # Always use final expert frame as goal
+    execute_steps: int = 0  # Execute fewer steps than replan_steps (0 = use replan_steps)
 
     #################################################################################################################
     # CEM parameters
@@ -386,7 +388,10 @@ def eval_libero(args: Args) -> None:
                             "prompt": str(task_description),
                         }
 
-                        goal_image = np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1])
+                        if args.use_final_goal:
+                            goal_image = np.ascontiguousarray(np.asarray(goal_images[-1])[::-1, ::-1])
+                        else:
+                            goal_image = np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1])
 
                         if args.random_selected_action:
                             payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel, multi_scale=args.multi_scale_noise)
@@ -400,7 +405,7 @@ def eval_libero(args: Args) -> None:
                                 prediction_steps=args.replan_steps, args=args,
                             )
                             print(f"CEM best mse: {best_mse:.6f}")
-                            plan_idx += args.replan_steps
+                            plan_idx += (args.execute_steps if args.execute_steps > 0 else args.replan_steps)
                             plan_idx = min(plan_idx, len(goal_images) - 1)
 
                             # Save WM rollout predictions (from the best CEM iteration)
@@ -427,7 +432,7 @@ def eval_libero(args: Args) -> None:
                             }
                             print("selecting actions chunks......")
                             results = action_selector.infer(wm_obs)
-                            plan_idx += args.replan_steps
+                            plan_idx += (args.execute_steps if args.execute_steps > 0 else args.replan_steps)
                             plan_idx = min(plan_idx, len(goal_images)-1)
                             if args.softmax_blend:
                                 mse_distances = np.array(results['mse_distance'])
@@ -460,10 +465,11 @@ def eval_libero(args: Args) -> None:
                         
                         # Query model to get action
                         # action_chunk = client.infer(element)["actions"]
+                        exec_steps = args.execute_steps if args.execute_steps > 0 else args.replan_steps
                         assert (
-                            len(action_chunk) >= args.replan_steps
-                        ), f"We want to replan every {args.replan_steps} steps, but policy only predicts {len(action_chunk)} steps."
-                        action_plan.extend(action_chunk[: args.replan_steps])
+                            len(action_chunk) >= exec_steps
+                        ), f"We want to execute {exec_steps} steps, but policy only predicts {len(action_chunk)} steps."
+                        action_plan.extend(action_chunk[: exec_steps])
 
                     action = action_plan.popleft()
 

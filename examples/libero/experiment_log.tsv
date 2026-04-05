@@ -22,3 +22,6 @@ run_id	commit	strategy	description	success_rate	successes	episodes	status	notes
 17	b62e922	default_wm	20 cand, replan=25, multi-scale noise	0.73	11	15	done	no improvement
 18	b62e922	default_wm	20 cand, replan=25, noise=1.5	0.53	8	15	done	noise=2 better
 19	b62e922	softmax_blend	20 cand, replan=25, blend top5	0.00	0	15	done	blending kills actions
+20	a9ddcc2	default_wm	20 cand, replan=25, noise=2.5	0.40	6	15	done	too much noise
+21	a9ddcc2	default_wm	20 cand, replan=25, final goal	0.47	7	15	done	intermediate goals better
+22	a9ddcc2	default_wm	20 cand, replan=25, exec=10	0.87	13	15	done	NEW BEST - MPC style
