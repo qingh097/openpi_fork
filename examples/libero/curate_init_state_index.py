@@ -13,7 +13,10 @@ def curate_init_state_index(root_folder):
         reader = csv.reader(f, delimiter=',')
         next(reader)
         for row in reader:
-            task, seed, index = row
+            try:
+                task, seed, index = row
+            except:
+                import pdb; pdb.set_trace()
             seed_init_state = torch.load(os.path.join(root_folder, f'seed_{seed}', f'{task}.pruned_init'))
             cur_task_init_state = init_state.get(task, [])
             cur_task_init_state.append(seed_init_state[int(index)])
@@ -50,7 +53,7 @@ def curate_goal_images(root_folder):
             
 
 root_folder = '/viscam/projects/dexs2r/libero_init/libero_object_unseen'
-agentview_goal_images_all, wrist_goal_images_all = curate_goal_images(root_folder)
+# agentview_goal_images_all, wrist_goal_images_all = curate_goal_images(root_folder)
 
 if False:
     #visualize the goal images by saving to video
@@ -64,21 +67,21 @@ if False:
             video_path = os.path.join(root_folder,f'{task}_wrist_goal_images_{i}.mp4')
             imageio.mimsave(video_path, wrist_image)
 
-agentview_h5 = h5py.File(os.path.join(root_folder,f'agentview_goal_images.h5'), 'w')
-for task, agentview_goal_images in agentview_goal_images_all.items():
-    task_gp = agentview_h5.create_group(f'{task}')
-    for i in range(len(agentview_goal_images)):
-        task_gp.create_dataset(f'{i}', data=agentview_goal_images[i])
-agentview_h5.close()
+# agentview_h5 = h5py.File(os.path.join(root_folder,f'agentview_goal_images.h5'), 'w')
+# for task, agentview_goal_images in agentview_goal_images_all.items():
+#     task_gp = agentview_h5.create_group(f'{task}')
+#     for i in range(len(agentview_goal_images)):
+#         task_gp.create_dataset(f'{i}', data=agentview_goal_images[i])
+# agentview_h5.close()
 
-wrist_h5 = h5py.File(os.path.join(root_folder,f'wrist_goal_images.h5'), 'w')
-for task, wrist_goal_images in wrist_goal_images_all.items():
-    task_gp = wrist_h5.create_group(f'{task}')
-    for i in range(len(wrist_goal_images)):
-        task_gp.create_dataset(f'{i}', data=wrist_goal_images[i])
-wrist_h5.close()
+# wrist_h5 = h5py.File(os.path.join(root_folder,f'wrist_goal_images.h5'), 'w')
+# for task, wrist_goal_images in wrist_goal_images_all.items():
+#     task_gp = wrist_h5.create_group(f'{task}')
+#     for i in range(len(wrist_goal_images)):
+#         task_gp.create_dataset(f'{i}', data=wrist_goal_images[i])
+# wrist_h5.close()
 
 
-# init_state = curate_init_state_index(root_folder)
-# for task, init_state in init_state.items():
-#     torch.save(init_state, os.path.join(root_folder,f'{task}_all.pruned_init'))
+init_state = curate_init_state_index(root_folder)
+for task, init_state in init_state.items():
+    torch.save(init_state, os.path.join(root_folder,f'{task}_all.pruned_init'))

@@ -23,7 +23,7 @@ import h5py
 import os
 from robosuite.utils.binding_utils import MjSimState
 import torch
-
+import csv
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256  # resolution used to render training data
 
@@ -42,7 +42,7 @@ class Args:
     # LIBERO environment-specific parameters
     #################################################################################################################
     task_suite_name: str = (
-        "libero_spatial"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
+        "libero_object"  # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
     )
     num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize i n sim
     num_trials_per_task: int = 50  # Number of rollouts per task
@@ -52,7 +52,7 @@ class Args:
     #################################################################################################################
     video_out_path: str = "data/libero/videos"  # Path to save videos
 
-    seed: int = 591  # Random Seed (for reproducibility)
+    seed: int = 2025  # Random Seed (for reproducibility)
     
     save_data: bool = False
 
@@ -106,7 +106,7 @@ def eval_libero(args: Args) -> None:
     SAVE_INIT_STATES = False
     LOAD_INIT_STATES = False
     data_save_folder_path = f"/viscam/projects/dexs2r/libero_init/{args.task_suite_name}/seed_{args.seed}/"
-    # Start evaluation
+    
     total_episodes, total_successes = 0, 0
     for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
         # Get task
@@ -116,10 +116,12 @@ def eval_libero(args: Args) -> None:
         
         # Initialize LIBERO environment and task description
         env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
-        initial_states = random_initial_states(env, initial_states)
+        # initial_states = random_initial_states(env, initial_states)
         
         if SAVE_INIT_STATES:
             save_folder_path = f"/viscam/projects/dexs2r/libero_init/{task_suite.tasks[task_id].problem_folder}/seed_{args.seed}/"
+            
+            
             os.makedirs(save_folder_path, exist_ok=True)
             init_states_path = os.path.join(
                 save_folder_path,
@@ -131,12 +133,31 @@ def eval_libero(args: Args) -> None:
         if LOAD_INIT_STATES:
             # init_states_folder = f'/viscam/projects/dexs2r/libero_init/{task_suite.tasks[task_id].problem_folder}/'
             # init_states_path = os.path.join(init_states_folder, f'{task_description.replace(" ","_")}_all.pruned_init')
-            init_states_folder = '/viscam/projects/dexs2r/libero_init/libero_object_unseen/seed_591'
+            init_states_folder = f'/viscam/projects/dexs2r/libero_init/libero_object_unseen/seed_{args.seed}'
             init_states_path = os.path.join(init_states_folder, f'{task_description.replace(" ","_")}.pruned_init')
             
+            if not os.path.exists(init_states_path):
+                print(f"init_states_path does not exist: {init_states_path}")
+                continue
+            
+            expert_demo_info_csv_path = '/viscam/projects/dexs2r/libero_init/libero_object_unseen/init_state_path.csv'
+            task_name = task_description.replace(" ","_")
+            csv_reader = csv.reader(open(expert_demo_info_csv_path, 'r'))
+            next(csv_reader)
+            #read all seeds, and indexes from the csv file, which is the second column, and third column respectively
+            all_indexes = []
+            for row in csv_reader:
+                task, seed, index = row
+                if task == task_name and int(seed) == int(args.seed):
+                    all_indexes.append(int(index))
+            if len(all_indexes) == 0:
+                print(f"no episodes found for task: {task_name} and seed: {args.seed}")
+                continue
+                    
             initial_states = torch.load(init_states_path)
             # predefined_index = np.arange(len(initial_states))
-            predefined_index = [23]
+            predefined_index = all_indexes
+            # predefined_index = [23]
             print(f"predefined episodes: {predefined_index}")
         else:
             predefined_index = range(args.num_trials_per_task)
@@ -174,8 +195,6 @@ def eval_libero(args: Args) -> None:
 
             # Set initial states
             obs = env.set_init_state(initial_states[episode_idx])
-
-
             # Setup
             t = 0
             replay_images = []
