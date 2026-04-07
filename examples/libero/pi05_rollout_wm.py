@@ -36,7 +36,7 @@ class Args:
     #################################################################################################################
     # Model server parameters
     #################################################################################################################
-    host: str = "10.79.12.127"
+    host: str = "10.79.12.251"
     port: int = 8000
     wm_host: str = "0.0.0.0"
     wm_port: int = 9100
@@ -63,9 +63,11 @@ class Args:
     
     save_data: bool = False
     save_videos: bool = False  # Save replay/WM videos to disk
-    random_selected_action: bool = False
+    random_selected_action: bool = False  # Baseline: randomly pick one of the sampled action chunks
+    average_selected_action: bool = False  # Baseline: average all sampled action chunks
     max_tasks: int = 1  # Max number of tasks to evaluate (0 = all)
     max_episodes: int = 5  # Max episodes per task (0 = all)
+    skip_tasks: int = 0  # Number of tasks to skip from the beginning
 
     #################################################################################################################
     # Action selection parameters
@@ -80,6 +82,7 @@ class Args:
     blend_top_k: int = 5  # Number of top candidates to blend
     use_final_goal: bool = False  # Always use final expert frame as goal
     execute_steps: int = 0  # Execute fewer steps than replan_steps (0 = use replan_steps)
+    load_init_states: bool = True  # Load init states from expert demo files (set False for suites without expert demos)
 
     #################################################################################################################
     # CEM parameters
@@ -89,6 +92,8 @@ class Args:
     cem_population: int = 20  # Number of candidates per CEM iteration
     cem_elite_fraction: float = 0.2  # Fraction of elites to keep
     cem_noise_scale_init: float = 2.0  # Initial noise scale
+    cem_in_noise_space: bool = False  # CEM resamples in diffusion noise space instead of action space
+    cem_noise_anneal: float = 1.0  # Multiply noise std by this factor each CEM iteration (< 1 = annealing)
 
 def random_initial_states(env, initial_states):
     #sample an array of 50,4 floats between 0 and 0.01
@@ -123,7 +128,7 @@ def generate_batched_input(element, batch_size, noise_scale=1, smooth_noise=Fals
     return payload
 
 def cem_action_selection(client, action_selector, element, goal_image, agent_obs, wrist_obs, prediction_steps, args):
-    """Cross-Entropy Method seeded by VLA policy samples, then refined in action space."""
+    """Cross-Entropy Method seeded by VLA policy samples, then refined in action or noise space."""
     num_elites = max(1, int(args.cem_population * args.cem_elite_fraction))
 
     best_action = None
@@ -133,6 +138,7 @@ def cem_action_selection(client, action_selector, element, goal_image, agent_obs
 
     # Iteration 0: seed with VLA policy samples
     payload = generate_batched_input(element, batch_size=args.cem_population, noise_scale=args.cem_noise_scale_init)
+    all_noises = payload["_noise"].copy()  # (N, 50, 32)
     all_action_chunks = np.array(client.infer(payload)["actions"])  # (N, T, action_dim)
 
     for cem_iter in range(args.cem_iters):
@@ -149,7 +155,6 @@ def cem_action_selection(client, action_selector, element, goal_image, agent_obs
 
         # Select elites
         elite_indices = np.argsort(mse_distances)[:num_elites]
-        elite_actions = all_action_chunks[elite_indices]  # (K, T, action_dim)
 
         # Track global best across all iterations
         iter_best = elite_indices[0]
@@ -162,13 +167,27 @@ def cem_action_selection(client, action_selector, element, goal_image, agent_obs
         print(f"  CEM iter {cem_iter}: best_mse={mse_distances[iter_best]:.6f}, "
               f"mean_mse={mse_distances.mean():.6f}, std_mse={mse_distances.std():.6f}")
 
-        # If not the last iteration, resample around elites in action space
+        # If not the last iteration, resample around elites
         if cem_iter < args.cem_iters - 1:
-            action_mean = elite_actions.mean(axis=0)  # (T, action_dim)
-            action_std = elite_actions.std(axis=0) + 1e-5  # (T, action_dim)
-            all_action_chunks = action_mean + action_std * np.random.randn(
-                args.cem_population, *action_mean.shape
-            )
+            anneal = args.cem_noise_anneal ** (cem_iter + 1)
+            if args.cem_in_noise_space:
+                # Resample in diffusion noise space, then denoise through VLA
+                elite_noises = all_noises[elite_indices]  # (K, 50, 32)
+                noise_mean = elite_noises.mean(axis=0)
+                noise_std = (elite_noises.std(axis=0) + 1e-5) * anneal
+                all_noises = noise_mean + noise_std * np.random.randn(
+                    args.cem_population, *noise_mean.shape
+                )
+                payload = {**element.copy(), "batch_size": args.cem_population, "_noise": all_noises}
+                all_action_chunks = np.array(client.infer(payload)["actions"])
+            else:
+                # Resample in action space (original behavior)
+                elite_actions = all_action_chunks[elite_indices]
+                action_mean = elite_actions.mean(axis=0)
+                action_std = (elite_actions.std(axis=0) + 1e-5) * anneal
+                all_action_chunks = action_mean + action_std * np.random.randn(
+                    args.cem_population, *action_mean.shape
+                )
 
     return best_action, best_idx, best_score, best_predictions
 
@@ -192,6 +211,8 @@ def eval_libero(args: Args) -> None:
         max_steps = 280  # longest training demo has 254 steps
     elif args.task_suite_name == "libero_object_unseen":
         max_steps = 280  # longest training demo has 254 steps
+    elif args.task_suite_name == "libero_location_unseen":
+        max_steps = 280
     elif args.task_suite_name == "libero_goal":
         max_steps = 300  # longest training demo has 270 steps
     elif args.task_suite_name == "libero_10":
@@ -202,15 +223,19 @@ def eval_libero(args: Args) -> None:
         raise ValueError(f"Unknown task suite: {args.task_suite_name}")
 
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
-    action_selector = _websocket_client_policy.WebsocketClientPolicy(args.wm_host, args.wm_port)
+    # Skip WM connection for baselines that don't need it
+    if args.random_selected_action or args.average_selected_action:
+        action_selector = None
+    else:
+        action_selector = _websocket_client_policy.WebsocketClientPolicy(args.wm_host, args.wm_port)
     
     SAVE_INIT_STATES = False
-    LOAD_INIT_STATES = True
-    data_save_folder_path = f"/viscam/projects/dexs2r/libero_init/{args.task_suite_name}/seed_{args.seed}/"
+    LOAD_INIT_STATES = args.load_init_states
+    data_save_folder_path = f"/viscam/projects/lacwm/libero_init/{args.task_suite_name}/seed_{args.seed}/"
     # Start evaluation
     total_episodes, total_successes = 0, 0
     num_tasks_to_eval = min(num_tasks_in_suite, args.max_tasks) if args.max_tasks > 0 else num_tasks_in_suite
-    for task_id in tqdm.tqdm(range(num_tasks_to_eval)):
+    for task_id in tqdm.tqdm(range(args.skip_tasks, num_tasks_to_eval)):
         # Get task
         task = task_suite.get_task(task_id)
         # Get default LIBERO initial states
@@ -220,7 +245,7 @@ def eval_libero(args: Args) -> None:
         env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
         initial_states = random_initial_states(env, initial_states)
         if SAVE_INIT_STATES:
-            save_folder_path = f"/viscam/projects/dexs2r/libero_init/{task_suite.tasks[task_id].problem_folder}/seed_{args.seed}/"
+            save_folder_path = f"/viscam/projects/lacwm/libero_init/{task_suite.tasks[task_id].problem_folder}/seed_{args.seed}/"
             os.makedirs(save_folder_path, exist_ok=True)
             init_states_path = os.path.join(
                 save_folder_path,
@@ -231,21 +256,21 @@ def eval_libero(args: Args) -> None:
             
         if LOAD_INIT_STATES:
             task_name = task_description.replace(" ","_")
-            
+
             # if task_name in ['pick_up_the_red_coffee_mug_and_place_it_in_the_basket', 'pick_up_the_book_and_place_it_in_the_basket','pick_up_the_white_yellow_mug_and_place_it_in_the_basket']:
             #     continue
-            
+
             # init_states_folder = f'/viscam/projects/dexs2r/libero_init/{task_suite.tasks[task_id].problem_folder}/'
             init_states_folder = f'/viscam/projects/lacwm/libero_init/{task_suite.tasks[task_id].problem_folder}/'
-            
+
             init_states_path = os.path.join(init_states_folder, f'{task_name}_all.pruned_init')
-            
+
             if not os.path.exists(init_states_path):
                 print(f"init_states_path does not exist: {init_states_path}")
                 continue
-            
+
             expert_demo_info_csv_path = os.path.join(init_states_folder, f'init_state_path.csv')
-            
+
             csv_reader = csv.reader(open(expert_demo_info_csv_path, 'r'))
             next(csv_reader)
             #read all seeds, and indexes from the csv file, which is the second column, and third column respectively
@@ -258,7 +283,7 @@ def eval_libero(args: Args) -> None:
                     all_seeds.append(int(seed))
             # init_states_folder = '/viscam/projects/dexs2r/libero_init/libero_object_unseen/seed_591'
             # init_states_path = os.path.join(init_states_folder, f'{task_description.replace(" ","_")}.pruned_init')
-            
+
             initial_states = torch.load(init_states_path)
             predefined_index = np.arange(len(initial_states))
             if args.max_episodes > 0:
@@ -292,16 +317,19 @@ def eval_libero(args: Args) -> None:
         # for episode_idx in tqdm.tqdm(range(args.num_trials_per_task)):
         for episode_idx in tqdm.tqdm(predefined_index):
             logging.info(f"\nTask: {task_description}")
-            
-            expert_demo_data_path = os.path.join(init_states_folder, f'seed_{all_seeds[episode_idx]}', f'{task_name}.hdf5')
-            expert_demo_data = h5py.File(expert_demo_data_path, 'r')['data']
-            demo_index = all_indexes[episode_idx]
-            try:
-                cur_demo_key = f'demo_{demo_index}'
-            except:
-                import pdb; pdb.set_trace()
-            cur_demo_data = expert_demo_data[cur_demo_key]
-            goal_images = cur_demo_data['obs/agentview_rgb']
+
+            if LOAD_INIT_STATES:
+                expert_demo_data_path = os.path.join(init_states_folder, f'seed_{all_seeds[episode_idx]}', f'{task_name}.hdf5')
+                expert_demo_data = h5py.File(expert_demo_data_path, 'r')['data']
+                demo_index = all_indexes[episode_idx]
+                try:
+                    cur_demo_key = f'demo_{demo_index}'
+                except:
+                    import pdb; pdb.set_trace()
+                cur_demo_data = expert_demo_data[cur_demo_key]
+                goal_images = cur_demo_data['obs/agentview_rgb']
+            else:
+                goal_images = None
             
             model_xml = env.sim.model.get_xml()
 
@@ -388,15 +416,31 @@ def eval_libero(args: Args) -> None:
                             "prompt": str(task_description),
                         }
 
-                        if args.use_final_goal:
-                            goal_image = np.ascontiguousarray(np.asarray(goal_images[-1])[::-1, ::-1])
+                        if goal_images is not None:
+                            if args.use_final_goal:
+                                goal_image = np.ascontiguousarray(np.asarray(goal_images[-1])[::-1, ::-1])
+                            else:
+                                goal_image = np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1])
                         else:
-                            goal_image = np.ascontiguousarray(np.asarray(goal_images[plan_idx])[::-1, ::-1])
+                            goal_image = None
 
                         if args.random_selected_action:
                             payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel, multi_scale=args.multi_scale_noise)
                             all_action_chunks = np.array(client.infer(payload)["actions"])
-                            action_chunk = all_action_chunks[np.random.randint(0, len(all_action_chunks))]
+                            selected_idx = np.random.randint(0, len(all_action_chunks))
+                            action_chunk = all_action_chunks[selected_idx]
+                            plan_idx += (args.execute_steps if args.execute_steps > 0 else args.replan_steps)
+                            if goal_images is not None:
+                                plan_idx = min(plan_idx, len(goal_images) - 1)
+                            print(f"random baseline: selected chunk {selected_idx} out of {len(all_action_chunks)}")
+                        elif args.average_selected_action:
+                            payload = generate_batched_input(element, batch_size=args.num_candidates, noise_scale=args.noise_scale, smooth_noise=args.smooth_noise, smooth_kernel=args.smooth_kernel, multi_scale=args.multi_scale_noise)
+                            all_action_chunks = np.array(client.infer(payload)["actions"])
+                            action_chunk = all_action_chunks.mean(axis=0)
+                            plan_idx += (args.execute_steps if args.execute_steps > 0 else args.replan_steps)
+                            if goal_images is not None:
+                                plan_idx = min(plan_idx, len(goal_images) - 1)
+                            print(f"average baseline: averaged {len(all_action_chunks)} action chunks")
                         elif args.use_cem:
                             print("selecting action chunks with CEM......")
                             action_chunk, selected_idx, best_mse, wm_preds = cem_action_selection(
