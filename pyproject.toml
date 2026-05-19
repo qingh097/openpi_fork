@@ -1,3 +1,11 @@
+[tool.uv]
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64' and python_full_version >= '3.11' and python_full_version < '3.12'"]
+index-strategy = "unsafe-best-match"
+override-dependencies = ["pyav>=12.0.5 ; sys_platform == 'never'", "av>=12.0.5"]
+
+[[tool.uv.index]]
+url = "https://mirrors.cloud.tencent.com/pypi/simple"
+default = true
 [project]
 name = "openpi"
 version = "0.1.0"
